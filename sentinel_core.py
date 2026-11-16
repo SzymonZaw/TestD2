@@ -29,20 +29,20 @@ class ActionDecision:
 # Transparent baseline heuristics intended for controlled experiments.
 SIGNALS: tuple[tuple[str, re.Pattern[str], int], ...] = (
     ("ignore_previous_instructions", re.compile(
-        r"ignore\\s+(all\\s+)?(previous|prior|above)\\s+instructions|"
-        r"zignoruj\\s+(wszystkie\\s+)?(poprzednie|wcześniejsze)\\s+instrukcje", re.I), 35),
+        r"ignore\s+(all\s+)?(previous|prior|above)\s+instructions|"
+        r"zignoruj\s+(wszystkie\s+)?(poprzednie|wcześniejsze)\s+instrukcje", re.I), 35),
     ("system_prompt_disclosure", re.compile(
-        r"reveal|print|show|disclose\\s+(the\\s+)?(system\\s+prompt|hidden\\s+instructions)|"
-        r"ujawnij\\s+(prompt|instrukcje)", re.I), 30),
+        r"reveal|print|show|disclose\s+(the\s+)?(system\s+prompt|hidden\s+instructions)|"
+        r"ujawnij\s+(prompt|instrukcje)", re.I), 30),
     ("secret_exfiltration", re.compile(
-        r"(send|email|post|upload|transmit)\\s+.{0,50}(password|secret|api\\s*key|token|cookie)|"
-        r"(wyślij|prześlij|opublikuj).{0,50}(hasło|sekret|token|klucz\\s+api)", re.I), 40),
+        r"(send|email|post|upload|transmit)\s+.{0,50}(password|secret|api\s*key|token|cookie)|"
+        r"(wyślij|prześlij|opublikuj).{0,50}(hasło|sekret|token|klucz\s+api)", re.I), 40),
     ("authority_impersonation", re.compile(
-        r"(developer|system|administrator)\\s+(message|instruction):|"
-        r"(wiadomość|instrukcja)\\s+(systemowa|administratora):", re.I), 15),
+        r"(developer|system|administrator)\s+(message|instruction):|"
+        r"(wiadomość|instrukcja)\s+(systemowa|administratora):", re.I), 15),
     ("tool_manipulation", re.compile(
-        r"(call|invoke|use)\\s+(the\\s+)?(browser|shell|terminal|tool)|"
-        r"(uruchom|wywołaj)\\s+(narzędzie|terminal|powłokę)", re.I), 20),
+        r"(call|invoke|use)\s+(the\s+)?(browser|shell|terminal|tool)|"
+        r"(uruchom|wywołaj)\s+(narzędzie|terminal|powłokę)", re.I), 20),
 )
 
 
