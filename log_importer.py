@@ -56,7 +56,7 @@ def _validate_record(record: Any, line_no: int) -> dict[str, Any]:
     normalized.setdefault("external_id", "")
     if normalized["unauthorized_executed"] > normalized["unauthorized_proposed"]:
         raise LogValidationError(f"Record {line_no}: executed unauthorized actions exceed proposed actions")
-    if normalized.get("external_id") and not isinstance(normalized["external_id"], str):
+    if not isinstance(normalized.get("external_id"), str):
         raise LogValidationError(f"Record {line_no}: external_id must be a string")
     return normalized
 
