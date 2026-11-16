@@ -9,6 +9,10 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from log_importer import LogValidationError, parse_experiment_logs
+from sentinel_core import DEFAULT_ALLOWED_ACTIONS, evaluate_proposal
+from statistical_analysis import describe_binary
+
 APP_DIR = Path(__file__).resolve().parent
 DB_PATH = APP_DIR / "sentinel_research.db"
 CONFIGS = [
@@ -85,6 +89,11 @@ def init_db() -> None:
             notes TEXT DEFAULT ''
         );
         """)
+        # Safe schema migration for databases created by earlier app versions.
+        run_columns = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+        if "external_id" not in run_columns:
+            conn.execute("ALTER TABLE runs ADD COLUMN external_id TEXT DEFAULT ''")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_external_id ON runs(external_id) WHERE external_id IS NOT NULL AND external_id != ''")
         count = conn.execute("SELECT COUNT(*) FROM chapters").fetchone()[0]
         if count == 0:
             defaults = [
@@ -292,6 +301,31 @@ def page_analysis() -> None:
     if chart_rows:
         st.plotly_chart(px.bar(pd.DataFrame(chart_rows), x="Konfiguracja", y="Wartość (%)", color="Metryka",
                                barmode="group", title="Porównanie metryk"), use_container_width=True)
+    st.subheader("Przedziały ufności 95% dla metryk binarnych")
+    ci_rows = []
+    for config in configs:
+        part = df[df.configuration == config]
+        attack = part[part.category == "adversarial"]
+        benign_part = part[part.category == "benign"]
+        proposed_total = int(attack["unauthorized_proposed"].sum())
+        executed_total = int(attack["unauthorized_executed"].sum())
+        metrics_ci = [
+            ("ASR", int(attack["attack_success"].sum()), len(attack)),
+            ("UAER", executed_total, proposed_total),
+            ("FPR", int(benign_part["benign_flagged"].sum()), len(benign_part)),
+            ("LTCR", int(benign_part["task_success"].sum()), len(benign_part)),
+        ]
+        for metric_name, successes, trials in metrics_ci:
+            summary = describe_binary(successes, trials)
+            ci_rows.append({
+                "Konfiguracja": CONFIG_LABELS[config], "Metryka": metric_name,
+                "Sukcesy / mianownik": f"{successes}/{trials}",
+                "Wartość (%)": round(summary["rate_pct"], 2) if summary["rate_pct"] is not None else "—",
+                "Dolna granica 95% (%)": round(summary["ci95_low_pct"], 2) if summary["ci95_low_pct"] is not None else "—",
+                "Górna granica 95% (%)": round(summary["ci95_high_pct"], 2) if summary["ci95_high_pct"] is not None else "—",
+            })
+    st.dataframe(pd.DataFrame(ci_rows), use_container_width=True, hide_index=True)
+    st.caption("Przedziały Wilsona dla proporcji; UAER używa liczby działań jako mianownika, pozostałe metryki — liczby prób. Są to przedziały opisowe; nie zastępują testów porównawczych ani uwzględnienia zależności między próbami.")
     st.subheader("Opóźnienie")
     latency = df.dropna(subset=["latency_ms"])
     if not latency.empty:
@@ -300,6 +334,95 @@ def page_analysis() -> None:
     st.subheader("Eksport tabeli metryk")
     st.download_button("Pobierz zestawienie CSV", pd.DataFrame(rows).to_csv(index=False).encode("utf-8-sig"),
                        "sentinel_metrics.csv", "text/csv")
+
+def page_log_import() -> None:
+    st.title("📥 Import logów agenta (JSON / JSONL)")
+    st.caption("Import wymaga uprzednio zdefiniowanych scenariuszy. Każdy rekord jest walidowany przed zapisem.")
+    st.markdown("Minimalny rekord JSON:")
+    st.code("""{
+  "external_id": "run-0001",
+  "scenario_key": "ADV-001",
+  "configuration": "combined",
+  "trial_no": 1,
+  "category": "adversarial",
+  "attack_success": false,
+  "unauthorized_proposed": 1,
+  "unauthorized_executed": 0,
+  "benign_flagged": false,
+  "task_success": false,
+  "latency_ms": 125.4,
+  "baseline_latency_ms": 98.2,
+  "notes": "opcjonalne"
+}""", language="json")
+    uploaded = st.file_uploader("Wybierz plik .json lub .jsonl", type=["json", "jsonl"])
+    if uploaded is not None:
+        try:
+            records = parse_experiment_logs(uploaded.getvalue().decode("utf-8-sig"), uploaded.name)
+            st.success(f"Walidacja poprawna: {len(records)} rekordów.")
+            st.dataframe(pd.DataFrame(records), use_container_width=True, hide_index=True)
+            if st.button("Importuj poprawne rekordy", type="primary"):
+                inserted, skipped, errors = 0, 0, []
+                with connect() as conn:
+                    for index, record in enumerate(records, start=1):
+                        scenario = conn.execute(
+                            "SELECT id, category FROM scenarios WHERE scenario_key=?",
+                            (record["scenario_key"],)
+                        ).fetchone()
+                        if scenario is None:
+                            errors.append(f"Rekord {index}: nie znaleziono scenariusza {record['scenario_key']}.")
+                            continue
+                        if scenario["category"] != record["category"]:
+                            errors.append(f"Rekord {index}: kategoria nie zgadza się ze scenariuszem {record['scenario_key']}.")
+                            continue
+                        external_id = record.get("external_id", "").strip()
+                        if external_id and conn.execute("SELECT 1 FROM runs WHERE external_id=?", (external_id,)).fetchone():
+                            skipped += 1
+                            continue
+                        conn.execute("""INSERT INTO runs(
+                            scenario_id,configuration,trial_no,attack_success,unauthorized_proposed,
+                            unauthorized_executed,benign_flagged,task_success,latency_ms,
+                            baseline_latency_ms,notes,recorded_at,external_id
+                        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+                            int(scenario["id"]), record["configuration"], record["trial_no"],
+                            record["attack_success"], record["unauthorized_proposed"],
+                            record["unauthorized_executed"], record["benign_flagged"],
+                            record["task_success"], record.get("latency_ms"),
+                            record.get("baseline_latency_ms"), record.get("notes", ""),
+                            datetime.now().isoformat(timespec="seconds"), external_id
+                        ))
+                        inserted += 1
+                st.success(f"Zaimportowano: {inserted}; pominięto duplikaty: {skipped}.")
+                if errors:
+                    st.warning("Pominięte rekordy wymagające poprawy:\n" + "\n".join(errors))
+                if inserted:
+                    st.rerun()
+        except (UnicodeDecodeError, LogValidationError) as exc:
+            st.error(f"Nie udało się zaimportować pliku: {exc}")
+
+
+def page_shield_prototype() -> None:
+    st.title("🛡️ Sentinel — laboratorium prototypu")
+    st.warning("To deterministyczny prototyp badawczy oparty na jawnych regułach. Nie jest kompletnym detektorem prompt injection ani samodzielną granicą bezpieczeństwa.")
+    content = st.text_area("Tekst pobrany ze strony internetowej", height=180,
+        placeholder="Wklej treść strony do analizy...")
+    action = st.selectbox("Proponowane działanie agenta", [
+        "read_page", "extract_text", "take_screenshot", "send_email",
+        "submit_form", "download_file", "delete_file", "run_shell"
+    ])
+    if st.button("Oceń treść i działanie"):
+        result = evaluate_proposal(content, action, DEFAULT_ALLOWED_ACTIONS)
+        left, right = st.columns(2)
+        with left:
+            st.subheader("Analiza treści")
+            st.metric("Wynik ryzyka", f"{result['content']['risk_score']}/100")
+            st.write("Podejrzana treść:", "Tak" if result["content"]["suspicious"] else "Nie wykryto skonfigurowanych sygnałów")
+            st.write(result["content"]["explanation"])
+        with right:
+            st.subheader("Autoryzacja działania")
+            st.write("Decyzja:", "DOZWOLONE" if result["action"]["allowed"] else "ZABLOKOWANE")
+            st.write("Powód:", result["action"]["reason"])
+        st.info("Ocena treści i autoryzacja działania są niezależne. Brak wykrytego sygnału w treści nie nadaje agentowi dodatkowych uprawnień.")
+
 
 def page_sources() -> None:
     st.title("🔖 Bibliografia i źródła")
@@ -343,7 +466,7 @@ def main() -> None:
     init_db()
     with st.sidebar:
         st.title("Sentinel Research")
-        page = st.radio("Nawigacja", ["Pulpit", "Dokumentacja", "Scenariusze", "Próby", "Analiza", "Bibliografia", "Eksport"])
+        page = st.radio("Nawigacja", ["Pulpit", "Dokumentacja", "Scenariusze", "Próby", "Prototyp Sentinel", "Import logów", "Analiza", "Bibliografia", "Eksport"])
         st.divider()
         st.caption("Dane przechowywane lokalnie w pliku sentinel_research.db.")
     pages = {
@@ -351,6 +474,8 @@ def main() -> None:
         "Dokumentacja": page_chapters,
         "Scenariusze": page_scenarios,
         "Próby": page_runs,
+        "Prototyp Sentinel": page_shield_prototype,
+        "Import logów": page_log_import,
         "Analiza": page_analysis,
         "Bibliografia": page_sources,
         "Eksport": page_export,
