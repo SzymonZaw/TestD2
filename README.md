@@ -88,6 +88,8 @@ ASR, FPR i LTCR mają jednostkę próby. UAER ma jednostkę działania. Przedzia
 
 ## Testy
 
+Repozytorium ma również workflow GitHub Actions, który przy push i pull request wykonuje kompilację kontrolną oraz testy jednostkowe.
+
 Uruchom testy jednostkowe:
 
 ```bash
