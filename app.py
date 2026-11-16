@@ -326,11 +326,31 @@ def page_analysis() -> None:
             })
     st.dataframe(pd.DataFrame(ci_rows), use_container_width=True, hide_index=True)
     st.caption("Przedziały Wilsona dla proporcji; UAER używa liczby działań jako mianownika, pozostałe metryki — liczby prób. Są to przedziały opisowe; nie zastępują testów porównawczych ani uwzględnienia zależności między próbami.")
-    st.subheader("Opóźnienie")
+    st.subheader("Opóźnienie i narzut czasowy")
     latency = df.dropna(subset=["latency_ms"])
     if not latency.empty:
         st.plotly_chart(px.box(latency, x="configuration", y="latency_ms", color="configuration",
                                points="all", title="Rozkład czasu wykonania (ms)"), use_container_width=True)
+    overhead = df.dropna(subset=["latency_ms", "baseline_latency_ms"]).copy()
+    overhead = overhead[overhead["baseline_latency_ms"] > 0]
+    if not overhead.empty:
+        overhead["overhead_pct"] = (
+            (overhead["latency_ms"] - overhead["baseline_latency_ms"])
+            / overhead["baseline_latency_ms"] * 100
+        )
+        overhead_summary = overhead.groupby("configuration")["overhead_pct"].agg(
+            ["count", "mean", "median", "std"]
+        ).reset_index()
+        overhead_summary["Konfiguracja"] = overhead_summary["configuration"].map(CONFIG_LABELS)
+        st.dataframe(overhead_summary[["Konfiguracja", "count", "mean", "median", "std"]].rename(
+            columns={"count": "Liczba pomiarów", "mean": "Średni narzut (%)",
+                     "median": "Mediana narzutu (%)", "std": "Odchylenie standardowe"}
+        ), use_container_width=True, hide_index=True)
+        st.plotly_chart(px.box(overhead, x="configuration", y="overhead_pct",
+            color="configuration", points="all",
+            title="Narzut czasowy względem pomiaru bazowego (%)"), use_container_width=True)
+    else:
+        st.caption("Narzut czasowy nie jest liczony: uzupełnij dodatni czas bazowy dla pomiarów.")
     st.subheader("Eksport tabeli metryk")
     st.download_button("Pobierz zestawienie CSV", pd.DataFrame(rows).to_csv(index=False).encode("utf-8-sig"),
                        "sentinel_metrics.csv", "text/csv")
