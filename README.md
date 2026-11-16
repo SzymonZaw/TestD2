@@ -8,7 +8,7 @@ Lokalna aplikacja Streamlit do dokumentowania doktoratu, katalogowania scenarius
 - Katalog scenariuszy adwersarialnych i poprawnych (benign).
 - Rejestr prób dla czterech konfiguracji: baseline, content-only, policy-only i combined.
 - Import logów JSON oraz JSONL, walidacja rekordów i pomijanie powtórnego importu rekordów z tym samym `external_id`.
-- Obliczanie ASR, UAER, FPR i LTCR, wykresy i przedziały Wilsona 95%.
+- Obliczanie ASR, UAER, FPR i LTCR, przedziały Wilsona 95% oraz analizę czasu i względnego narzutu względem pomiaru bazowego.
 - Katalog bibliografii, eksport CSV i kopia bazy SQLite.
 - Laboratorium prototypu: ocena tekstu strony i niezależna kontrola proponowanej akcji.
 
