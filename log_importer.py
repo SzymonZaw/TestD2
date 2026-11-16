@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 
@@ -47,12 +48,15 @@ def _validate_record(record: Any, line_no: int) -> dict[str, Any]:
     for field in NUMERIC_FIELDS:
         value = normalized.get(field)
         if value is not None:
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
-                raise LogValidationError(f"Record {line_no}: {field} must be a non-negative number or null")
+            if (isinstance(value, bool) or not isinstance(value, (int, float))
+                    or not math.isfinite(value) or value < 0):
+                raise LogValidationError(f"Record {line_no}: {field} must be a finite non-negative number or null")
             normalized[field] = float(value)
     normalized.setdefault("unauthorized_proposed", 0)
     normalized.setdefault("unauthorized_executed", 0)
     normalized.setdefault("notes", "")
+    if not isinstance(normalized["notes"], str):
+        raise LogValidationError(f"Record {line_no}: notes must be a string")
     normalized.setdefault("external_id", "")
     if normalized["unauthorized_executed"] > normalized["unauthorized_proposed"]:
         raise LogValidationError(f"Record {line_no}: executed unauthorized actions exceed proposed actions")
