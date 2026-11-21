@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +13,8 @@ import streamlit as st
 from log_importer import LogValidationError, parse_experiment_logs
 from sentinel_core import DEFAULT_ALLOWED_ACTIONS, evaluate_proposal
 from statistical_analysis import describe_binary
+from openai_planner import OpenAIPlanner
+from playwright_runner import run_browser_agent
 
 APP_DIR = Path(__file__).resolve().parent
 DB_PATH = APP_DIR / "sentinel_research.db"
@@ -30,7 +33,7 @@ CONFIG_LABELS = {
 STATUSES = ["Planowany", "W trakcie", "Ukończony", "Do poprawy"]
 
 st.set_page_config(
-    page_title="Sentinel AI Web Shield — Research Manager",
+    page_title="Sentinel AI Web Shield",
     page_icon="🛡️",
     layout="wide",
 )
@@ -444,6 +447,93 @@ def page_shield_prototype() -> None:
         st.info("Ocena treści i autoryzacja działania są niezależne. Brak wykrytego sygnału w treści nie nadaje agentowi dodatkowych uprawnień.")
 
 
+
+def page_browser_agent() -> None:
+    st.title("🤖 Agent przeglądarkowy")
+    st.warning(
+        "Uruchomienie agenta wysyła zadanie i treść obserwowanych stron do OpenAI. "
+        "Każde wywołanie API może generować koszt. Agent ma wyłącznie akcje navigate/read_page."
+    )
+    if not os.getenv("OPENAI_API_KEY"):
+        st.error("Brak OPENAI_API_KEY w środowisku. Agent AI jest niedostępny.")
+        return
+
+    model = os.getenv("SENTINEL_OPENAI_MODEL", "gpt-4.1-mini")
+    st.success(f"Klucz API wykryty — model: {model}. Wartość klucza nie jest wyświetlana.")
+    st.caption(
+        f"Zużycie w tej sesji aplikacji: {st.session_state.get('api_requests', 0)} żądań · "
+        f"{st.session_state.get('api_tokens', 0)} tokenów."
+    )
+    with st.form("browser_agent_run"):
+        task = st.text_area("Zadanie dla agenta", placeholder="Otwórz stronę i przeczytaj jej publiczną zawartość.", max_chars=1000)
+        origins_text = st.text_input("Dozwolone originy (oddziel przecinkami)", placeholder="https://example.com")
+        max_calls = st.slider("Maksymalna liczba zapytań do OpenAI w tym uruchomieniu", min_value=1, max_value=8, value=3)
+        headless = st.checkbox("Przeglądarka w tle (headless)", value=True)
+        submitted = st.form_submit_button("Uruchom agenta — użyje API", type="primary")
+
+    if submitted:
+        origins = [item.strip() for item in origins_text.split(",") if item.strip()]
+        if not task.strip():
+            st.error("Wpisz zadanie agenta.")
+            return
+        if not origins:
+            st.error("Podaj co najmniej jeden dozwolony origin.")
+            return
+
+        st.session_state["api_requests_before_run"] = st.session_state.get("api_requests", 0)
+        st.session_state["api_tokens_before_run"] = st.session_state.get("api_tokens", 0)
+
+        def record_usage(usage: dict[str, int | str]) -> None:
+            st.session_state["api_requests"] = st.session_state["api_requests_before_run"] + usage["request_count"]
+            st.session_state["api_tokens"] = st.session_state["api_tokens_before_run"] + usage["total_tokens"]
+
+        planner = None
+        try:
+            planner = OpenAIPlanner(task, model=model, max_api_calls=max_calls, usage_callback=record_usage)
+            with st.spinner("Agent pracuje. Zapytania do OpenAI są wykonywane..."):
+                result = run_browser_agent("streamlit-agent", planner, origins, headless=headless, max_steps=max_calls)
+            st.session_state["last_agent_usage"] = planner.usage
+            st.subheader("Wynik uruchomienia")
+            st.write(f"Status: **{result.stopped_reason}**")
+            st.write(f"Zadanie zakończone: **{'tak' if result.completed else 'nie'}**")
+            st.write(f"Liczba kroków: **{len(result.observations)}**")
+            st.json(planner.usage)
+            for index, observation in enumerate(result.observations, start=1):
+                with st.expander(f"Krok {index}: {observation.action} — {observation.target_url}"):
+                    st.write("Dozwolone:", observation.result.allowed)
+                    st.write("Wykonane:", observation.result.executed)
+                    st.write("Powód:", observation.result.reason)
+                    output = observation.result.output
+                    st.text(str(getattr(output, "value", output))[:4000])
+        except Exception as exc:
+            st.error(f"Agent zatrzymany: {type(exc).__name__}: {exc}")
+            if planner is not None:
+                st.session_state["last_agent_usage"] = planner.usage
+                st.json(planner.usage)
+
+
+def page_api_status() -> None:
+    st.title("🔐 Status i kontrola API")
+    configured = bool(os.getenv("OPENAI_API_KEY"))
+    st.metric("Klucz OPENAI_API_KEY", "Wykryty" if configured else "Brak")
+    st.write("Model:", os.getenv("SENTINEL_OPENAI_MODEL", "gpt-4.1-mini"))
+    st.write("Zapytania w tej sesji:", st.session_state.get("api_requests", 0))
+    st.write("Zużyte tokeny w tej sesji:", st.session_state.get("api_tokens", 0))
+    last = st.session_state.get("last_agent_usage")
+    if last:
+        st.subheader("Ostatnie uruchomienie")
+        st.json(last)
+    st.info(
+        "Klucz jest pobierany ze zmiennej środowiskowej i nigdy nie jest pokazywany w interfejsie. "
+        "Wywołania API następują dopiero po ręcznym uruchomieniu agenta. "
+        "Każde uruchomienie ma limit zapytań i limit 500 tokenów odpowiedzi na jedno zapytanie."
+    )
+    st.warning(
+        "Aplikacja pokazuje liczbę żądań i tokeny raportowane przez API, ale nie wylicza ceny — "
+        "stawki zależą od modelu i mogą się zmieniać. Rzeczywisty koszt sprawdzaj w panelu rozliczeń OpenAI."
+    )
+
+
 def page_sources() -> None:
     st.title("🔖 Bibliografia i źródła")
     df = query_df("SELECT * FROM sources ORDER BY year DESC, title")
@@ -483,22 +573,19 @@ def page_export() -> None:
                            "sentinel_research_backup.sqlite", "application/octet-stream")
 
 def main() -> None:
-    init_db()
+    st.session_state.setdefault("api_requests", 0)
+    st.session_state.setdefault("api_tokens", 0)
     with st.sidebar:
-        st.title("Sentinel Research")
-        page = st.radio("Nawigacja", ["Pulpit", "Dokumentacja", "Scenariusze", "Próby", "Prototyp Sentinel", "Import logów", "Analiza", "Bibliografia", "Eksport"])
+        st.title("🛡️ Sentinel AI Web Shield")
+        configured = bool(os.getenv("OPENAI_API_KEY"))
+        st.markdown(f"**OpenAI API:** {'🟢 skonfigurowane' if configured else '🔴 brak klucza'}")
+        st.caption(f"Żądania: {st.session_state['api_requests']} · Tokeny: {st.session_state['api_tokens']}")
         st.divider()
-        st.caption("Dane przechowywane lokalnie w pliku sentinel_research.db.")
+        page = st.radio("Nawigacja", ["Ochrona treści", "Agent przeglądarkowy", "Status i kontrola API"])
     pages = {
-        "Pulpit": dashboard,
-        "Dokumentacja": page_chapters,
-        "Scenariusze": page_scenarios,
-        "Próby": page_runs,
-        "Prototyp Sentinel": page_shield_prototype,
-        "Import logów": page_log_import,
-        "Analiza": page_analysis,
-        "Bibliografia": page_sources,
-        "Eksport": page_export,
+        "Ochrona treści": page_shield_prototype,
+        "Agent przeglądarkowy": page_browser_agent,
+        "Status i kontrola API": page_api_status,
     }
     pages[page]()
 
