@@ -38,6 +38,8 @@ class ExecutionGateway:
         self,
         contract: TaskContract,
         handlers: Mapping[str, ActionHandler],
+        *,
+        approval_verifier: Callable[[ApprovalGrant, ActionRequest], bool] | None = None,
     ) -> None:
         if not isinstance(contract, TaskContract):
             raise TypeError("contract must be a TaskContract")
@@ -55,8 +57,12 @@ class ExecutionGateway:
                 raise TypeError(f"handler for {key} must be callable")
             normalized[key] = handler
 
+        if approval_verifier is not None and not callable(approval_verifier):
+            raise TypeError("approval_verifier must be callable")
+
         self._contract = contract
         self._handlers = normalized
+        self._approval_verifier = approval_verifier
 
     def execute(
         self,
@@ -64,13 +70,25 @@ class ExecutionGateway:
         approval: ApprovalGrant | None = None,
     ) -> ExecutionResult:
         """Run a registered handler only after policy authorization succeeds."""
-        decision = authorize_request(request, self._contract, approval)
+        # ApprovalGrant is only a claim, not proof of human authorization.
+        # It is ignored unless an explicitly configured trusted verifier
+        # authenticates the grant against this exact immutable request.
+        verified_approval: ApprovalGrant | None = None
+        if isinstance(approval, ApprovalGrant) and self._approval_verifier is not None:
+            try:
+                if self._approval_verifier(approval, request) is True:
+                    verified_approval = approval
+            except Exception:
+                # Approval verification failures must fail closed.
+                verified_approval = None
+
+        decision = authorize_request(request, self._contract, verified_approval)
         action = request.normalized_action
 
         exact_approval = (
-            isinstance(approval, ApprovalGrant)
-            and approval.task_id == request.task_id
-            and approval.request_fingerprint == decision.request_fingerprint
+            verified_approval is not None
+            and verified_approval.task_id == request.task_id
+            and verified_approval.request_fingerprint == decision.request_fingerprint
         )
         flow = assess_action_flow(action, request.untrusted_fields, exact_approval)
         if not decision.allowed or not flow.allowed:
