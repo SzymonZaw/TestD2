@@ -52,7 +52,7 @@ class _BrowserWorkerClient:
         self._responses: queue.Queue[str | None] = queue.Queue()
         worker_path = Path(__file__).with_name("browser_worker.py")
         self._process = subprocess.Popen(
-            [sys.executable, "-I", str(worker_path)],
+            [sys.executable, "-E", str(worker_path)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
