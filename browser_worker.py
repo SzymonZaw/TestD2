@@ -14,7 +14,7 @@ from browser_adapter import PlaywrightBrowserAdapter
 
 
 MAX_COMMAND_CHARS = 8192
-MAX_PAGE_TEXT_CHARS = 900_000
+MAX_PAGE_TEXT_CHARS = 400_000
 
 
 def _write_message(message: dict[str, Any]) -> None:
