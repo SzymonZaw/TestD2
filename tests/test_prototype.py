@@ -308,6 +308,7 @@ class SentinelPrototypeTests(unittest.TestCase):
         contract = TaskContract(
             "browser-task", frozenset({"navigate", "read_page"}),
             frozenset({"https://example.com"}),
+            allowed_url_prefixes=frozenset({"https://example.com/"}),
         )
         gateway = ExecutionGateway(contract, adapter.handlers)
         result = gateway.execute(ActionRequest(
@@ -325,7 +326,8 @@ class SentinelPrototypeTests(unittest.TestCase):
         adapter = PlaywrightBrowserAdapter(page, {"https://example.com"}, {"https://example.com/"})
         gateway = ExecutionGateway(
             TaskContract("browser-task", frozenset({"read_page"}),
-                         frozenset({"https://example.com"})),
+                         frozenset({"https://example.com"}),
+                         allowed_url_prefixes=frozenset({"https://example.com/"})),
             adapter.handlers,
         )
         result = gateway.execute(ActionRequest(
