@@ -9,7 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
-from policy import ActionRequest, ApprovalGrant, TaskContract, authorize_request\nfrom ifc import assess_action_flow
+from policy import ActionRequest, ApprovalGrant, TaskContract, authorize_request
+from ifc import assess_action_flow
 
 
 ActionHandler = Callable[[str, dict[str, Any]], Any]
@@ -66,7 +67,14 @@ class ExecutionGateway:
         decision = authorize_request(request, self._contract, approval)
         action = request.normalized_action
 
-        exact_approval = (\n            isinstance(approval, ApprovalGrant)\n            and approval.task_id == request.task_id\n            and approval.request_fingerprint == decision.request_fingerprint\n        )\n        flow = assess_action_flow(action, request.untrusted_fields, exact_approval)\n        if not decision.allowed or not flow.allowed:\n            return ExecutionResult(
+        exact_approval = (
+            isinstance(approval, ApprovalGrant)
+            and approval.task_id == request.task_id
+            and approval.request_fingerprint == decision.request_fingerprint
+        )
+        flow = assess_action_flow(action, request.untrusted_fields, exact_approval)
+        if not decision.allowed or not flow.allowed:
+            return ExecutionResult(
                 allowed=False,
                 executed=False,
                 action=action,
