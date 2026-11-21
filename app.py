@@ -464,7 +464,8 @@ def page_browser_agent() -> None:
     st.title("🤖 Agent przeglądarkowy")
     st.warning(
         "Uruchomienie agenta wysyła zadanie i treść obserwowanych stron do OpenAI. "
-        "Każde wywołanie API może generować koszt. Agent ma wyłącznie akcje navigate/read_page."
+        "Każde wywołanie API może generować koszt. Agent ma wyłącznie akcje navigate/read_page. "
+        "Nawigacja jest ograniczona do jawnie podanych prefiksów ścieżek URL."
     )
     if not os.getenv("OPENAI_API_KEY"):
         st.error("Brak OPENAI_API_KEY w środowisku. Agent AI jest niedostępny.")
@@ -480,6 +481,7 @@ def page_browser_agent() -> None:
     with st.form("browser_agent_run"):
         task = st.text_area("Zadanie dla agenta", placeholder="Otwórz stronę i przeczytaj jej publiczną zawartość.", max_chars=1000)
         origins_text = st.text_input("Dozwolone originy (oddziel przecinkami)", placeholder="https://example.com")
+        prefixes_text = st.text_input("Dozwolone prefiksy ścieżek URL (oddziel przecinkami)", placeholder="https://example.com/public")
         max_calls = st.slider("Maksymalna liczba zapytań do OpenAI w tym uruchomieniu", min_value=1, max_value=8, value=3)
         headless = st.checkbox("Przeglądarka w tle (headless)", value=True)
         submitted = st.form_submit_button("Uruchom agenta — użyje API", type="primary")
@@ -491,6 +493,10 @@ def page_browser_agent() -> None:
             return
         if not origins:
             st.error("Podaj co najmniej jeden dozwolony origin.")
+            return
+        prefixes = [item.strip() for item in prefixes_text.split(",") if item.strip()]
+        if not prefixes:
+            st.error("Podaj co najmniej jeden jawnie zatwierdzony prefiks ścieżki URL, np. https://example.com/public.")
             return
 
         st.session_state["api_requests_before_run"] = st.session_state.get("api_requests", 0)
@@ -517,7 +523,7 @@ def page_browser_agent() -> None:
                 request_guard=lambda: ledger.reserve_request(daily_limit),
             )
             with st.spinner("Agent pracuje. Zapytania do OpenAI są wykonywane..."):
-                result = run_browser_agent("streamlit-agent", planner, origins, headless=headless, max_steps=max_calls)
+                result = run_browser_agent("streamlit-agent", planner, origins, prefixes, headless=headless, max_steps=max_calls)
             st.session_state["last_agent_usage"] = planner.usage
             st.subheader("Wynik uruchomienia")
             st.write(f"Status: **{result.stopped_reason}**")
