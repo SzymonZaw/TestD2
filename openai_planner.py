@@ -206,14 +206,14 @@ class OpenAIPlanner:
         try:
             response = self._client.chat.completions.create(
                 model=self._model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": json.dumps(user_payload, ensure_ascii=False),
-                },
-            ],
-            response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": json.dumps(user_payload, ensure_ascii=False),
+                    },
+                ],
+                response_format={"type": "json_object"},
                 max_completion_tokens=500,
             )
         except Exception as exc:
