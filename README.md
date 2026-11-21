@@ -85,6 +85,48 @@ Scenariusz o podanym kluczu musi wcześniej istnieć w katalogu, a jego kategori
 - Niezaufane dane nie mogą trafić do wrażliwego sinka bez dokładnej zgody. Handler nie jest wywoływany przy odmowie.
 - To początkowa, jawna warstwa IFC. Integracja musi poprawnie oznaczać wszystkie pola pochodzące z danych WWW; brak etykiety nie dowodzi zaufania. Kontrola nie obejmuje jeszcze automatycznego śledzenia pochodzenia w całym runtime agenta.
 
+## Adapter przeglądarki Playwright
+
+- `browser_adapter.py` udostępnia wyłącznie dwie operacje: `navigate` i `read_page`. Nie udostępnia kliknięć, wypełniania pól, wysyłania formularzy, pobierania plików ani wykonywania JavaScript.
+- Adapter przyjmuje istniejący obiekt `Page` z synchronicznego Playwright i listę dozwolonych originów. Instaluje interceptor `page.route("**/*", ...)`, który przepuszcza wyłącznie żądania HTTP(S) do tych originów; pozostałe żądania, w tym żądania do obcych zasobów i przekierowania, są blokowane.
+- Tę samą listę originów należy przekazać do `TaskContract.allowed_origins`. Handlerów adaptera nie należy wywoływać bezpośrednio — przekazuje się je do `ExecutionGateway`.
+- `read_page` zwraca `TrackedText.from_web(...)`, więc tekst strony jest oznaczony jako `UNTRUSTED`. Przekazując go do kolejnego działania, należy używać `ActionRequest.from_tracked_arguments(...)`, aby zachować oznaczenie.
+- Playwright jest opcjonalną zależnością. Instalacja: `python -m pip install playwright`, a następnie `python -m playwright install chromium`. Sam pakiet nie jest wymagany do uruchamiania testów jednostkowych adaptera (testy korzystają z atrap).
+- Przykład podłączenia:
+
+```python
+from playwright.sync_api import sync_playwright
+
+from browser_adapter import PlaywrightBrowserAdapter
+from execution_gateway import ExecutionGateway
+from policy import ActionRequest, TaskContract
+
+allowed = {"https://example.com"}
+
+with sync_playwright() as playwright:
+    browser = playwright.chromium.launch()
+    # Blokada service workerów jest ważna, ponieważ żądania obsługiwane
+    # przez service worker mogą omijać mechanizm page.route.
+    context = browser.new_context(service_workers="block")
+    page = context.new_page()
+
+    adapter = PlaywrightBrowserAdapter(page, allowed)
+    contract = TaskContract(
+        task_id="demo",
+        allowed_actions=frozenset({"navigate", "read_page"}),
+        allowed_origins=frozenset(allowed),
+    )
+    gateway = ExecutionGateway(contract, adapter.handlers)
+
+    gateway.execute(ActionRequest("demo", "navigate", "https://example.com"))
+    result = gateway.execute(ActionRequest("demo", "read_page", page.url))
+    page_text = result.output  # TrackedText oznaczony jako UNTRUSTED
+
+    browser.close()
+```
+
+Adapter wymaga synchronicznego API Playwright. To wąska integracja przeglądarkowa, a nie kompletny runtime agenta. Nie zabezpiecza kodu uruchomionego poza kontrolowanym obiektem `Page`, nie uwierzytelnia zgód i nie zapewnia izolacji procesu przeglądarki. Nie należy traktować go jako gotowego zabezpieczenia produkcyjnego.
+
 ## Prototyp Sentinel — zakres i ograniczenia
 
 - `sentinel_core.py` zawiera jawne reguły heurystyczne do wykrywania wybranych wzorców instrukcji, takich jak próby nadpisania instrukcji, ujawnienia promptu, eksfiltracji sekretów czy manipulacji narzędziami.
@@ -93,7 +135,7 @@ Scenariusz o podanym kluczu musi wcześniej istnieć w katalogu, a jego kategori
 - `execution_gateway.py` jest punktem egzekwowania polityki: uruchamia zarejestrowany handler dopiero po pozytywnej decyzji. Handler otrzymuje kopię argumentów objętych odciskiem żądania; odrzucone żądania nie wywołują handlera.
 - Ocena treści nie nadaje uprawnień. Nawet jeśli tekst nie uruchomi reguły detekcyjnej, akcja nadal przechodzi osobną kontrolę polityki.
 - Reguły są celowo przejrzyste i stanowią punkt odniesienia do eksperymentów. Mogą generować fałszywe alarmy i przeoczenia. Nie są semantycznym detektorem, sandboxem, mechanizmem uwierzytelniania ani kompletną ochroną przeglądarki.
-- Gateway jest obecnie adapterem badawczym: nie ma jeszcze implementacji adaptera prawdziwej przeglądarki ani integracji z konkretnym agentem. Operacje są wykonywane wyłącznie przez jawnie wstrzyknięte handlery; moduł sam nie wykonuje żądań sieciowych.
+- Gateway pozostaje adapterem badawczym, ale repozytorium zawiera teraz ograniczony adapter synchronicznego Playwright opisany poniżej. Nie jest to jeszcze integracja z autonomicznym agentem.
 - `ApprovalGrant` jest obecnie obiektem danych, a nie podpisanym tokenem ani dowodem uwierzytelnienia. W produkcji musi być tworzony wyłącznie przez zaufany komponent interfejsu po uwierzytelnieniu użytkownika. Samo utworzenie obiektu w Pythonie nie stanowi bezpiecznego procesu akceptacji.
 
 ## Definicje metryk
