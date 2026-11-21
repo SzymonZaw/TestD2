@@ -1,4 +1,6 @@
 import unittest
+from unittest.mock import patch
+from browser_adapter import PlaywrightBrowserAdapter
 from policy import ActionRequest, TaskContract, authorize_request, url_is_within_prefix
 
 
@@ -59,6 +61,64 @@ class URLPathScopeTests(unittest.TestCase):
         request = ActionRequest("scope-test", "navigate", "https://example.com/public/page", {})
         decision = authorize_request(request, self.contract)
         self.assertTrue(decision.allowed)
+
+class RequestInterceptionTests(unittest.TestCase):
+    class Page:
+        def route(self, pattern, handler):
+            self.handler = handler
+
+    class Request:
+        def __init__(self, url, method="GET"):
+            self.url = url
+            self.method = method
+
+    class Route:
+        def __init__(self, url, method="GET"):
+            self.request = RequestInterceptionTests.Request(url, method)
+            self.continued = False
+            self.aborted = False
+
+        def continue_(self):
+            self.continued = True
+
+        def abort(self):
+            self.aborted = True
+
+    def setUp(self):
+        self.page = self.Page()
+        self.adapter = PlaywrightBrowserAdapter(
+            self.page,
+            {"https://example.com"},
+            {"https://example.com/public"},
+        )
+
+    def test_allows_scoped_get_resource(self):
+        route = self.Route("https://example.com/public/style.css")
+        with patch("browser_adapter._has_public_destination", return_value=True):
+            self.adapter._guard_request(route)
+        self.assertTrue(route.continued)
+        self.assertFalse(route.aborted)
+
+    def test_blocks_post_even_inside_approved_path(self):
+        route = self.Route("https://example.com/public/action", "POST")
+        with patch("browser_adapter._has_public_destination", return_value=True):
+            self.adapter._guard_request(route)
+        self.assertFalse(route.continued)
+        self.assertTrue(route.aborted)
+
+    def test_blocks_get_outside_approved_path(self):
+        route = self.Route("https://example.com/logout")
+        with patch("browser_adapter._has_public_destination", return_value=True):
+            self.adapter._guard_request(route)
+        self.assertFalse(route.continued)
+        self.assertTrue(route.aborted)
+
+    def test_blocks_query_string_requests(self):
+        route = self.Route("https://example.com/public?do=logout")
+        with patch("browser_adapter._has_public_destination", return_value=True):
+            self.adapter._guard_request(route)
+        self.assertFalse(route.continued)
+        self.assertTrue(route.aborted)
 
 
 if __name__ == "__main__":
