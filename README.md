@@ -73,9 +73,12 @@ Scenariusz o podanym kluczu musi wcześniej istnieć w katalogu, a jego kategori
 
 - `sentinel_core.py` zawiera jawne reguły heurystyczne do wykrywania wybranych wzorców instrukcji, takich jak próby nadpisania instrukcji, ujawnienia promptu, eksfiltracji sekretów czy manipulacji narzędziami.
 - `authorize_action` stosuje niezależną listę dozwolonych działań; nieznane akcje są domyślnie odrzucane.
+- `policy.py` wiąże żądanie z identyfikatorem zadania, dozwolonym originem i odciskiem dokładnych argumentów. Działania wrażliwe (m.in. wysyłanie wiadomości, submit formularza, usuwanie, zakup, upload i uruchamianie powłoki) wymagają osobnej zgody nawet wtedy, gdy nazwa akcji znajduje się na allowliście.
+- `execution_gateway.py` jest punktem egzekwowania polityki: uruchamia zarejestrowany handler dopiero po pozytywnej decyzji. Handler otrzymuje kopię argumentów objętych odciskiem żądania; odrzucone żądania nie wywołują handlera.
 - Ocena treści nie nadaje uprawnień. Nawet jeśli tekst nie uruchomi reguły detekcyjnej, akcja nadal przechodzi osobną kontrolę polityki.
 - Reguły są celowo przejrzyste i stanowią punkt odniesienia do eksperymentów. Mogą generować fałszywe alarmy i przeoczenia. Nie są semantycznym detektorem, sandboxem, mechanizmem uwierzytelniania ani kompletną ochroną przeglądarki.
-- Prototyp nie jest jeszcze podłączony do rzeczywistego agenta ani do przeglądarki. Nie wykonuje narzędzi ani operacji sieciowych.
+- Gateway jest obecnie adapterem badawczym: nie ma jeszcze implementacji adaptera prawdziwej przeglądarki ani integracji z konkretnym agentem. Operacje są wykonywane wyłącznie przez jawnie wstrzyknięte handlery; moduł sam nie wykonuje żądań sieciowych.
+- `ApprovalGrant` jest obecnie obiektem danych, a nie podpisanym tokenem ani dowodem uwierzytelnienia. W produkcji musi być tworzony wyłącznie przez zaufany komponent interfejsu po uwierzytelnieniu użytkownika. Samo utworzenie obiektu w Pythonie nie stanowi bezpiecznego procesu akceptacji.
 
 ## Definicje metryk
 
@@ -95,6 +98,8 @@ Uruchom testy jednostkowe:
 ```bash
 python -m unittest discover -s tests -v
 ```
+
+Testy gatewaya używają atrap handlerów, aby potwierdzić, że odrzucone operacje nie wywołują żadnego wykonawcy. Przykładową integrację należy budować przez przekazanie jawnego słownika handlerów do `ExecutionGateway`; nie należy udostępniać agentowi alternatywnej ścieżki bez kontroli polityki.
 
 ## Ważne uwagi badawcze i bezpieczeństwa
 
