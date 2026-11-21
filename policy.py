@@ -77,16 +77,51 @@ class ActionRequest:
         target_url: str = "",
         arguments: Mapping[str, Any] | None = None,
     ) -> "ActionRequest":
-        """Build a request and automatically propagate top-level TrackedText labels."""
+        """Unwrap tracked values recursively and taint their top-level sink field.
+
+        The current IFC representation tracks argument fields rather than
+        individual JSON paths. Therefore any untrusted descendant taints its
+        complete top-level argument, preventing nested containers from
+        bypassing the sensitive-sink check.
+        """
+        if arguments is not None and not isinstance(arguments, Mapping):
+            raise TypeError("arguments must be a mapping or None")
+
+        def unwrap(value: Any) -> tuple[Any, bool]:
+            if isinstance(value, TrackedText):
+                return (
+                    value.value,
+                    value.provenance.label is TrustLabel.UNTRUSTED,
+                )
+            if isinstance(value, Mapping):
+                result: dict[str, Any] = {}
+                tainted = False
+                for key, child in value.items():
+                    if not isinstance(key, str):
+                        raise ValueError("nested argument object keys must be strings")
+                    clean_child, child_tainted = unwrap(child)
+                    result[key] = clean_child
+                    tainted = tainted or child_tainted
+                return result, tainted
+            if isinstance(value, (list, tuple)):
+                result = []
+                tainted = False
+                for child in value:
+                    clean_child, child_tainted = unwrap(child)
+                    result.append(clean_child)
+                    tainted = tainted or child_tainted
+                return result, tainted
+            return value, False
+
         values: dict[str, Any] = {}
         untrusted: set[str] = set()
         for name, value in (arguments or {}).items():
-            if isinstance(value, TrackedText):
-                values[name] = value.value
-                if value.provenance.label is TrustLabel.UNTRUSTED:
-                    untrusted.add(name)
-            else:
-                values[name] = value
+            if not isinstance(name, str):
+                raise ValueError("argument names must be strings")
+            clean_value, tainted = unwrap(value)
+            values[name] = clean_value
+            if tainted:
+                untrusted.add(name)
         return cls(
             task_id=task_id,
             action=action,
