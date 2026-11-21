@@ -465,7 +465,8 @@ def page_browser_agent() -> None:
     st.warning(
         "Uruchomienie agenta wysyła zadanie i treść obserwowanych stron do OpenAI. "
         "Każde wywołanie API może generować koszt. Agent ma wyłącznie akcje navigate/read_page. "
-        "Nawigacja jest ograniczona do jawnie podanych prefiksów ścieżek URL."
+        "Nawigacja jest ograniczona do jawnie podanych prefiksów ścieżek URL. "
+        "Chromium działa w osobnym procesie bez przekazywania klucza OpenAI."
     )
     if not os.getenv("OPENAI_API_KEY"):
         st.error("Brak OPENAI_API_KEY w środowisku. Agent AI jest niedostępny.")
@@ -482,7 +483,7 @@ def page_browser_agent() -> None:
         task = st.text_area("Zadanie dla agenta", placeholder="Otwórz stronę i przeczytaj jej publiczną zawartość.", max_chars=1000)
         origins_text = st.text_input("Dozwolone originy (oddziel przecinkami)", placeholder="https://example.com")
         prefixes_text = st.text_input("Dozwolone prefiksy ścieżek URL (oddziel przecinkami)", placeholder="https://example.com/public")
-        st.caption("Wybieraj możliwie wąskie ścieżki. Prefiks z końcówką / obejmuje całą domenę. Agent blokuje query stringi, metody inne niż GET/HEAD i JavaScript strony.")
+        st.caption("Wybieraj możliwie wąskie ścieżki. Prefiks / obejmuje całą domenę. Agent blokuje query stringi, metody inne niż GET/HEAD i JavaScript strony. Przeglądarka działa w osobnym procesie.")
         max_calls = st.slider("Maksymalna liczba zapytań do OpenAI w tym uruchomieniu", min_value=1, max_value=8, value=3)
         headless = st.checkbox("Przeglądarka w tle (headless)", value=True)
         submitted = st.form_submit_button("Uruchom agenta — użyje API", type="primary")
