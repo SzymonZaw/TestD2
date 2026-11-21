@@ -65,6 +65,11 @@ def _validate_command(message: Any, configured: bool) -> str:
 
 
 def main() -> int:
+    # Parent and worker use an explicit UTF-8 JSON-lines protocol on Windows too.
+    if hasattr(sys.stdin, "reconfigure"):
+        sys.stdin.reconfigure(encoding="utf-8")
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     _write_message({"type": "ready", "ok": True})
     configured = False
     playwright_manager = None
