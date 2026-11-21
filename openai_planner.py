@@ -7,6 +7,7 @@ marked UNTRUSTED before they reach ActionRequest and ExecutionGateway.
 from __future__ import annotations
 
 import json
+import math
 import os
 from typing import Any, Iterable
 
@@ -30,6 +31,12 @@ or null values. Do not include nested objects or arrays. Never propose
 submitting forms, clicking, messaging, purchasing, deleting, uploading,
 running code, or any other side effect.
 """
+
+
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-standard JSON numeric constant is not allowed: {value}")
 
 
 def _output_text(value: Any) -> str:
@@ -151,8 +158,8 @@ class OpenAIPlanner:
         )
         try:
             raw = response.choices[0].message.content
-            proposal = json.loads(raw)
-        except (AttributeError, IndexError, TypeError, json.JSONDecodeError) as exc:
+            proposal = json.loads(raw, parse_constant=_reject_json_constant)
+        except (AttributeError, IndexError, TypeError, ValueError) as exc:
             raise ValueError("model returned an invalid planner response") from exc
 
         if not isinstance(proposal, dict) or set(proposal) != {
@@ -172,22 +179,26 @@ class OpenAIPlanner:
             return None
         if action not in self._allowed_actions:
             raise ValueError("model proposed an action outside the planner allowlist")
-        if not isinstance(target_url, str):
-            raise ValueError("target_url must be a string")
-        if not isinstance(arguments, dict):
-            raise ValueError("arguments must be a JSON object")
+        if not isinstance(target_url, str) or len(target_url) > 2048:
+            raise ValueError("target_url must be a string no longer than 2048 characters")
+        if not isinstance(arguments, dict) or len(arguments) > 32:
+            raise ValueError("arguments must be a JSON object with at most 32 fields")
 
         tracked_arguments: dict[str, Any] = {}
         for key, value in arguments.items():
-            if not isinstance(key, str) or not key:
-                raise ValueError("argument names must be non-empty strings")
+            if not isinstance(key, str) or not key or len(key) > 128:
+                raise ValueError("argument names must be non-empty strings of at most 128 characters")
             if isinstance(value, str):
+                if len(value) > 2000:
+                    raise ValueError("string arguments must not exceed 2000 characters")
                 tracked_arguments[key] = TrackedText.from_web(
                     value, "llm-planner-output"
                 )
-            elif value is None or isinstance(value, (bool, int, float)):
+            elif value is None or isinstance(value, (bool, int)):
+                tracked_arguments[key] = value
+            elif isinstance(value, float) and math.isfinite(value):
                 tracked_arguments[key] = value
             else:
-                raise ValueError("planner arguments must contain only scalar JSON values")
+                raise ValueError("planner arguments must contain only finite scalar JSON values")
 
         return AgentProposal(action, target_url, tracked_arguments)
