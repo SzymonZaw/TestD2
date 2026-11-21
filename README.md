@@ -126,6 +126,37 @@ Instalacja: `python -m pip install playwright`, a następnie `python -m playwrig
 
 Runtime nie implementuje samodzielnie LLM ani uwierzytelniania zgód. Planner może być podłączony do modelu przez adapter aplikacyjny, ale jego propozycje nie uzyskują uprawnień: każda przechodzi przez Gateway. Obecny runner celowo nie obsługuje operacji zmieniających stan strony lub konta. To prototyp badawczy, nie izolacja procesu ani gotowe zabezpieczenie produkcyjne.
 
+### Planner OpenAI (LLM)
+
+Opcjonalny adapter `openai_planner.py` łączy pętlę runtime z modelem OpenAI. Nie rejestruje narzędzi modelu i nie daje mu dostępu do obiektu przeglądarki. Wymaga osobnej instalacji SDK:
+
+```bash
+python -m pip install -r requirements-llm.txt
+```
+
+Ustaw klucz API w zmiennej środowiskowej `OPENAI_API_KEY` (nie zapisuj go w repozytorium). Model można zmienić przez `SENTINEL_OPENAI_MODEL`; domyślnie używany jest `gpt-4.1-mini`.
+
+```python
+from openai_planner import OpenAIPlanner
+from playwright_runner import run_browser_agent
+
+planner = OpenAIPlanner(
+    task="Otwórz stronę i odczytaj jej główną treść.",
+    allowed_actions={"navigate", "read_page"},
+)
+
+result = run_browser_agent(
+    task_id="openai-demo",
+    planner=planner,
+    allowed_origins={"https://example.com"},
+    headless=True,
+    max_steps=5,
+)
+print(result.stopped_reason, result.completed)
+```
+
+Adapter wymusza odpowiedź JSON i odrzuca akcje spoza allowlisty. Każdy tekstowy argument wygenerowany przez model otrzymuje etykietę `UNTRUSTED`; treść obserwacji jest przekazywana modelowi jako dane, nie instrukcje. Błąd wywołania modelu zatrzymuje runtime z powodem `planner_error` — bez wykonywania akcji zastępczej. To nadal nie jest mechanizm odporności na wszystkie ataki prompt injection; model pozostaje komponentem proponującym, a nie autoryzującym działania.
+
 ## Prototyp Sentinel — zakres i ograniczenia
 
 - `sentinel_core.py` zawiera jawne reguły heurystyczne do wykrywania wybranych wzorców instrukcji, takich jak próby nadpisania instrukcji, ujawnienia promptu, eksfiltracji sekretów czy manipulacji narzędziami.
