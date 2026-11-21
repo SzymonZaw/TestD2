@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
+from typing import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,7 +17,7 @@ class ApiUsageLedger:
 
     def __init__(self, path: str | Path) -> None:
         self.path = str(path)
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS api_usage (
@@ -35,6 +37,15 @@ class ApiUsageLedger:
         connection = sqlite3.connect(self.path, timeout=10)
         connection.row_factory = sqlite3.Row
         return connection
+
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        connection = self._connect()
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     def reserve_request(self, daily_limit: int) -> int:
         if isinstance(daily_limit, bool) or not isinstance(daily_limit, int) or daily_limit < 1:
