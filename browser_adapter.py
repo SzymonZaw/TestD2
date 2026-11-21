@@ -6,10 +6,40 @@ It deliberately does not expose click, fill, submit, download, or arbitrary JS.
 """
 from __future__ import annotations
 
+import ipaddress
+import socket
 from typing import Any, Iterable
 from urllib.parse import urlsplit
 
 from provenance import TrackedText
+
+
+def _has_public_destination(url: str) -> bool:
+    """Reject loopback/private/link-local/reserved destinations.
+
+    DNS is checked at interception time as defense in depth. This is not a
+    substitute for network-level egress filtering: DNS can change between this
+    check and Chromium's connection (DNS rebinding/TOCTOU).
+    """
+    try:
+        parsed = urlsplit(url)
+        host = parsed.hostname
+        if not host:
+            return False
+        normalized = host.rstrip(".").lower()
+        if normalized == "localhost" or normalized.endswith(".localhost"):
+            return False
+        try:
+            addresses = {ipaddress.ip_address(normalized)}
+        except ValueError:
+            records = socket.getaddrinfo(
+                normalized, parsed.port or (443 if parsed.scheme.lower() == "https" else 80),
+                type=socket.SOCK_STREAM,
+            )
+            addresses = {ipaddress.ip_address(record[4][0]) for record in records}
+        return bool(addresses) and all(address.is_global for address in addresses)
+    except (OSError, ValueError, TypeError):
+        return False
 
 
 def _origin(url: str) -> str:
@@ -59,7 +89,10 @@ class PlaywrightBrowserAdapter:
     def _guard_request(self, route: Any) -> None:
         try:
             request_url = route.request.url
-            allowed = _origin(request_url) in self._allowed_origins
+            allowed = (
+                _origin(request_url) in self._allowed_origins
+                and _has_public_destination(request_url)
+            )
         except (AttributeError, TypeError, ValueError):
             allowed = False
         if allowed:
@@ -72,6 +105,8 @@ class PlaywrightBrowserAdapter:
             raise ValueError("navigate does not accept additional arguments")
         if _origin(target_url) not in self._allowed_origins:
             raise PermissionError("navigation target is outside the adapter origin allowlist")
+        if not _has_public_destination(target_url):
+            raise PermissionError("navigation target resolves to a non-public or unverifiable address")
         self._page.goto(target_url, wait_until="domcontentloaded")
         final_url = self._page.url
         if _origin(final_url) not in self._allowed_origins:
