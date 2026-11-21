@@ -69,6 +69,14 @@ Przykład:
 
 Scenariusz o podanym kluczu musi wcześniej istnieć w katalogu, a jego kategoria musi zgadzać się z kategorią rekordu.
 
+## Śledzenie pochodzenia danych (Provenance Tracking)
+
+- `provenance.py` dostarcza niezmienne etykiety `TRUSTED` i `UNTRUSTED` oraz obiekt `TrackedText` przechowujący źródło i historię transformacji.
+- `TrackedText.from_web(...)` zawsze oznacza tekst pobrany ze strony jako `UNTRUSTED`.
+- Transformacje zachowują etykietę zaufania. Łączenie danych zaufanych i niezaufanych powoduje oznaczenie całego wyniku jako `UNTRUSTED`.
+- Dostępna jest operacja obniżenia zaufania (`mark_untrusted`), ale nie ma metody podnoszącej zaufanie. `from_trusted_source` wolno wywoływać wyłącznie na zaufanej granicy aplikacji.
+- To warstwa metadanych dla przepływu danych, a nie kompletne IFC. Dopóki wszystkie źródła danych i transformacje agenta nie korzystają z tych obiektów, oznaczenia nie są automatycznie egzekwowane w całej aplikacji.
+
 ## Prototyp Sentinel — zakres i ograniczenia
 
 - `sentinel_core.py` zawiera jawne reguły heurystyczne do wykrywania wybranych wzorców instrukcji, takich jak próby nadpisania instrukcji, ujawnienia promptu, eksfiltracji sekretów czy manipulacji narzędziami.
