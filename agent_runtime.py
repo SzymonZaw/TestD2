@@ -84,7 +84,13 @@ class BrowserAgentRuntime:
     def run(self) -> AgentRunResult:
         observations: list[AgentObservation] = []
         for _ in range(self._max_steps):
-            proposal = self._planner(tuple(observations))
+            try:
+                proposal = self._planner(tuple(observations))
+            except Exception:
+                # Planner/API failures must stop the run; never improvise a fallback action.
+                return AgentRunResult(
+                    self._task_id, tuple(observations), "planner_error", False
+                )
             if proposal is None:
                 return AgentRunResult(
                     self._task_id, tuple(observations), "planner_finished", True
