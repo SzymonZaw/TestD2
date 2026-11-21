@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import math
 import os
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from agent_runtime import AgentObservation, AgentProposal
 from provenance import TrackedText
@@ -66,6 +66,8 @@ class OpenAIPlanner:
         model: str | None = None,
         allowed_actions: Iterable[str] = ("navigate", "read_page"),
         max_observation_chars: int = 6000,
+        max_api_calls: int = 8,
+        usage_callback: Callable[[dict[str, int | str]], None] | None = None,
         client: Any | None = None,
     ) -> None:
         if not isinstance(task, str) or not task.strip():
@@ -86,12 +88,23 @@ class OpenAIPlanner:
         ):
             raise ValueError("max_observation_chars must be an integer >= 256")
 
+        if isinstance(max_api_calls, bool) or not isinstance(max_api_calls, int) or max_api_calls < 1:
+            raise ValueError("max_api_calls must be a positive integer")
+        if usage_callback is not None and not callable(usage_callback):
+            raise TypeError("usage_callback must be callable")
+
         self._task = task.strip()
         self._model = model or os.getenv("SENTINEL_OPENAI_MODEL", "gpt-4.1-mini")
         if not isinstance(self._model, str) or not self._model.strip():
             raise ValueError("model must be a non-empty string")
         self._allowed_actions = actions
         self._max_observation_chars = max_observation_chars
+        self._max_api_calls = max_api_calls
+        self._usage_callback = usage_callback
+        self._request_count = 0
+        self._prompt_tokens = 0
+        self._completion_tokens = 0
+        self._total_tokens = 0
 
         if client is None:
             try:
@@ -103,6 +116,32 @@ class OpenAIPlanner:
                 ) from exc
             client = OpenAI()
         self._client = client
+
+    @property
+    def usage(self) -> dict[str, int | str]:
+        """Return API usage for this planner instance; never includes credentials."""
+        return {
+            "model": self._model,
+            "request_count": self._request_count,
+            "max_api_calls": self._max_api_calls,
+            "prompt_tokens": self._prompt_tokens,
+            "completion_tokens": self._completion_tokens,
+            "total_tokens": self._total_tokens,
+        }
+
+    def _record_usage(self, response: Any | None = None) -> None:
+        usage = getattr(response, "usage", None) if response is not None else None
+        prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
+        completion = int(getattr(usage, "completion_tokens", 0) or 0)
+        total = int(getattr(usage, "total_tokens", prompt + completion) or 0)
+        self._prompt_tokens += max(0, prompt)
+        self._completion_tokens += max(0, completion)
+        self._total_tokens += max(0, total)
+        if self._usage_callback is not None:
+            try:
+                self._usage_callback(self.usage)
+            except Exception:
+                pass
 
     def __call__(
         self, history: tuple[AgentObservation, ...]
@@ -144,8 +183,14 @@ class OpenAIPlanner:
                 "arguments": "flat JSON object of scalar values",
             },
         }
-        response = self._client.chat.completions.create(
-            model=self._model,
+        if self._request_count >= self._max_api_calls:
+            raise RuntimeError(
+                f"OpenAI request limit reached ({self._max_api_calls} calls)"
+            )
+        self._request_count += 1
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {
@@ -154,8 +199,12 @@ class OpenAIPlanner:
                 },
             ],
             response_format={"type": "json_object"},
-            max_completion_tokens=500,
-        )
+                max_completion_tokens=500,
+            )
+        except Exception:
+            self._record_usage()
+            raise
+        self._record_usage(response)
         try:
             raw = response.choices[0].message.content
             proposal = json.loads(raw, parse_constant=_reject_json_constant)
