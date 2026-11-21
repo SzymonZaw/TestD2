@@ -1,0 +1,44 @@
+name: Extract dissertation text
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "Doktorat.pdf"
+      - ".github/workflows/extract-dissertation.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Install PDF text extractor
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils
+
+      - name: Extract text from dissertation
+        run: |
+          test -s Doktorat.pdf
+          pdftotext -layout Doktorat.pdf Doktorat.txt
+          test -s Doktorat.txt
+
+      - name: Commit extracted text
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Doktorat.txt
+          if git diff --cached --quiet; then
+            echo "No changes to extracted text."
+          else
+            git commit -m "Extract dissertation PDF text"
+            git push origin HEAD:main
+          fi
