@@ -98,8 +98,12 @@ class TaskContract:
     def __post_init__(self) -> None:
         if not isinstance(self.task_id, str) or not self.task_id.strip():
             raise ValueError("task_id must be a non-empty string")
-        if isinstance(self.allowed_actions, str) or isinstance(self.requires_approval, str):
-            raise TypeError("action collections must be sets or other iterables of action names")
+        if (
+            isinstance(self.allowed_actions, str)
+            or isinstance(self.requires_approval, str)
+            or isinstance(self.allowed_origins, str)
+        ):
+            raise TypeError("actions and origins must be collections, not strings")
         actions = frozenset(
             item.strip().lower() for item in self.allowed_actions
             if isinstance(item, str) and item.strip()
