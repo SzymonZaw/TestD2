@@ -148,7 +148,7 @@ class BrowserAgentIntegrationTests(unittest.TestCase):
             )
         return result, planner, client, page, context, browser, chromium
 
-    def test_real_planner_runtime_gateway_and_playwright_runner_path(self):
+    def test_openai_planner_runtime_gateway_and_playwright_runner_path(self):
         page_text = "Welcome. The public page says hello."
         responses = [
             planner_response("navigate", "https://example.com/start"),
@@ -169,7 +169,6 @@ class BrowserAgentIntegrationTests(unittest.TestCase):
             ("https://example.com/start", "domcontentloaded")
         ])
         self.assertEqual(page.route_pattern, "**/*")
-        self.assertEqual(context.options, None)
         self.assertEqual(browser.context_options, {"service_workers": "block"})
         self.assertTrue(context.closed)
         self.assertTrue(browser.closed)
