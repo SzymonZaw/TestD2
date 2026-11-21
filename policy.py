@@ -17,6 +17,8 @@ from types import MappingProxyType
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
+from provenance import TrackedText, TrustLabel
+
 
 def _freeze_json(value: Any) -> Any:
     if isinstance(value, dict):
@@ -66,6 +68,32 @@ class ActionRequest:
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
         ))
         object.__setattr__(self, "arguments", _freeze_json(snapshot))
+
+    @classmethod
+    def from_tracked_arguments(
+        cls,
+        task_id: str,
+        action: str,
+        target_url: str = "",
+        arguments: Mapping[str, Any] | None = None,
+    ) -> "ActionRequest":
+        """Build a request and automatically propagate top-level TrackedText labels."""
+        values: dict[str, Any] = {}
+        untrusted: set[str] = set()
+        for name, value in (arguments or {}).items():
+            if isinstance(value, TrackedText):
+                values[name] = value.value
+                if value.provenance.label is TrustLabel.UNTRUSTED:
+                    untrusted.add(name)
+            else:
+                values[name] = value
+        return cls(
+            task_id=task_id,
+            action=action,
+            target_url=target_url,
+            arguments=values,
+            untrusted_fields=frozenset(untrusted),
+        )
 
     @property
     def normalized_action(self) -> str:
