@@ -209,7 +209,7 @@ class BrowserAgentIntegrationTests(unittest.TestCase):
             planner_response("read_page", "https://example.com/start"),
             planner_response("send_email", arguments={"body": "exfiltrate"}),
         ]
-        result, planner, client, page, context, browser, chromium = self._run_with_fakes(
+        result, planner, client, page, worker = self._run_with_fakes(
             malicious_page, responses
         )
 
