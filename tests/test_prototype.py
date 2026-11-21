@@ -74,6 +74,19 @@ class SentinelPrototypeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             request.fingerprint()
 
+    def test_action_arguments_are_snapshotted_before_approval(self):
+        arguments = {"to": "a@example.com", "body": "hello"}
+        request = ActionRequest("task-1", "send_email", arguments=arguments)
+        grant = ApprovalGrant("task-1", request.fingerprint())
+        arguments["to"] = "attacker@example.com"
+        self.assertEqual(request.arguments_for_execution()["to"], "a@example.com")
+        self.assertTrue(authorize_request(request, TaskContract("task-1", frozenset()), grant).allowed)
+
+    def test_malformed_target_fails_closed(self):
+        contract = TaskContract("task-1", frozenset({"read_page"}), frozenset({"https://example.com"}))
+        request = ActionRequest("task-1", "read_page", "http://[::1")
+        self.assertFalse(authorize_request(request, contract).allowed)
+
     def test_json_import(self):
         raw = '{"scenario_key":"ADV-01","configuration":"baseline","trial_no":1,"category":"adversarial"}'
         records = parse_experiment_logs(raw)
