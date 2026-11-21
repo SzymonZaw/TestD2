@@ -182,12 +182,21 @@ class _BrowserWorkerClient:
                     process.stdin.flush()
                 process.wait(timeout=5)
             except (OSError, subprocess.TimeoutExpired):
-                process.terminate()
+                try:
+                    process.terminate()
+                except OSError:
+                    pass
                 try:
                     process.wait(timeout=3)
                 except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=3)
+                    try:
+                        process.kill()
+                    except OSError:
+                        pass
+                    try:
+                        process.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        pass
         for stream_name in ("stdin", "stdout"):
             stream = getattr(process, stream_name, None)
             if stream is not None:
