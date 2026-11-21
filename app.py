@@ -556,6 +556,7 @@ def page_api_status() -> None:
     if last:
         st.subheader("Ostatnie uruchomienie")
         st.json(last)
+    st.caption("Dzienny limit można zmienić zmienną środowiskową SENTINEL_DAILY_API_CALL_LIMIT (domyślnie 50).")
     st.info(
         "Klucz jest pobierany ze zmiennej środowiskowej i nigdy nie jest pokazywany w interfejsie. "
         "Wywołania API następują dopiero po ręcznym uruchomieniu agenta. "
