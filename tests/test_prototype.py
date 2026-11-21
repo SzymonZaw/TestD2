@@ -322,7 +322,7 @@ class SentinelPrototypeTests(unittest.TestCase):
     def test_browser_adapter_marks_page_text_untrusted(self):
         page = _FakePage()
         page.url = "https://example.com/article"
-        adapter = PlaywrightBrowserAdapter(page, {"https://example.com"})
+        adapter = PlaywrightBrowserAdapter(page, {"https://example.com"}, {"https://example.com/"})
         gateway = ExecutionGateway(
             TaskContract("browser-task", frozenset({"read_page"}),
                          frozenset({"https://example.com"})),
@@ -338,7 +338,7 @@ class SentinelPrototypeTests(unittest.TestCase):
 
     def test_browser_adapter_blocks_network_requests_to_other_origins(self):
         page = _FakePage()
-        adapter = PlaywrightBrowserAdapter(page, {"https://example.com"})
+        adapter = PlaywrightBrowserAdapter(page, {"https://example.com"}, {"https://example.com/"})
         allowed = _FakeRoute("https://example.com/script.js")
         blocked = _FakeRoute("https://tracker.example/pixel")
         adapter._guard_request(allowed)
@@ -350,7 +350,7 @@ class SentinelPrototypeTests(unittest.TestCase):
 
     def test_browser_adapter_gateway_denies_unapproved_navigation(self):
         page = _FakePage()
-        adapter = PlaywrightBrowserAdapter(page, {"https://example.com"})
+        adapter = PlaywrightBrowserAdapter(page, {"https://example.com"}, {"https://example.com/"})
         gateway = ExecutionGateway(
             TaskContract("browser-task", frozenset({"navigate"}),
                          frozenset({"https://example.com"})),
@@ -370,7 +370,7 @@ class SentinelPrototypeTests(unittest.TestCase):
 
     def test_agent_runtime_runs_only_gateway_navigation_and_read_steps(self):
         page = _FakePage()
-        adapter = PlaywrightBrowserAdapter(page, {"https://example.com"})
+        adapter = PlaywrightBrowserAdapter(page, {"https://example.com"}, {"https://example.com/"})
         gateway = ExecutionGateway(
             TaskContract(
                 "agent-task", frozenset({"navigate", "read_page"}),
@@ -396,7 +396,7 @@ class SentinelPrototypeTests(unittest.TestCase):
 
     def test_agent_runtime_carries_page_taint_into_sensitive_action(self):
         page = _FakePage()
-        adapter = PlaywrightBrowserAdapter(page, {"https://example.com"})
+        adapter = PlaywrightBrowserAdapter(page, {"https://example.com"}, {"https://example.com/"})
         calls = []
         handlers = adapter.handlers
         handlers["send_email"] = lambda url, args: calls.append(args) or "sent"
