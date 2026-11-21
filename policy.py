@@ -32,6 +32,7 @@ class ActionRequest:
     action: str
     target_url: str = ""
     arguments: Mapping[str, Any] | None = None
+    untrusted_fields: frozenset[str] = frozenset()
     _arguments_json: str = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -53,6 +54,14 @@ class ActionRequest:
             raise ValueError("action arguments must be JSON-serializable finite values") from exc
         if not isinstance(snapshot, dict) or not all(isinstance(key, str) for key in snapshot):
             raise ValueError("action arguments must be a JSON object with string keys")
+        if isinstance(self.untrusted_fields, str):
+            raise TypeError("untrusted_fields must be a collection of top-level argument names")
+        fields = frozenset(self.untrusted_fields)
+        if any(not isinstance(name, str) or not name.strip() for name in fields):
+            raise ValueError("untrusted field names must be non-empty strings")
+        if any(name not in snapshot for name in fields):
+            raise ValueError("every untrusted field must identify an existing top-level argument")
+        object.__setattr__(self, "untrusted_fields", fields)
         object.__setattr__(self, "_arguments_json", json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
         ))
@@ -73,6 +82,7 @@ class ActionRequest:
             "action": self.normalized_action,
             "target_url": self.target_url,
             "arguments": json.loads(self._arguments_json),
+            "untrusted_fields": sorted(self.untrusted_fields),
         }
         encoded = json.dumps(
             payload, sort_keys=True, separators=(",", ":"),
