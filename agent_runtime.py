@@ -119,7 +119,15 @@ class BrowserAgentRuntime:
                     self._task_id, tuple(observations),
                     "request_or_approval_error", False
                 )
-            result = self._gateway.execute(request, approval)
+            try:
+                result = self._gateway.execute(request, approval)
+            except Exception:
+                # Browser/gateway failures terminate the run. Do not ask the
+                # planner to improvise after a failed execution boundary.
+                return AgentRunResult(
+                    self._task_id, tuple(observations),
+                    "gateway_execution_error", False
+                )
             observations.append(
                 AgentObservation(proposal.action, proposal.target_url, result)
             )
