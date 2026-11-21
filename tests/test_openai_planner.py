@@ -19,7 +19,8 @@ class _FakeCompletions:
         return SimpleNamespace(
             choices=[SimpleNamespace(
                 message=SimpleNamespace(content=self.content)
-            )]
+            )],
+            usage=SimpleNamespace(prompt_tokens=12, completion_tokens=7, total_tokens=19),
         )
 
 
@@ -111,6 +112,25 @@ class OpenAIPlannerTests(unittest.TestCase):
         }))
         with self.assertRaises(ValueError):
             OpenAIPlanner("Read a page", client=client)(())
+
+
+    def test_planner_tracks_token_usage_without_exposing_credentials(self):
+        client = _FakeClient(json.dumps({"action": "finish", "target_url": "", "arguments": {}}))
+        planner = OpenAIPlanner("Done", client=client, max_api_calls=2)
+        planner(())
+        self.assertEqual(planner.usage["request_count"], 1)
+        self.assertEqual(planner.usage["prompt_tokens"], 12)
+        self.assertEqual(planner.usage["completion_tokens"], 7)
+        self.assertEqual(planner.usage["total_tokens"], 19)
+        self.assertNotIn("api_key", planner.usage)
+
+    def test_planner_enforces_hard_api_request_limit(self):
+        client = _FakeClient(json.dumps({"action": "finish", "target_url": "", "arguments": {}}))
+        planner = OpenAIPlanner("Done", client=client, max_api_calls=1)
+        planner(())
+        with self.assertRaisesRegex(RuntimeError, "request limit reached"):
+            planner(())
+        self.assertEqual(planner.usage["request_count"], 1)
 
     def test_runtime_stops_when_planner_api_fails(self):
         gateway = ExecutionGateway(
