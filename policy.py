@@ -15,7 +15,7 @@ import hashlib
 import json
 from types import MappingProxyType
 from typing import Any, Mapping
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from provenance import TrackedText, TrustLabel
 
@@ -166,6 +166,7 @@ class TaskContract:
     task_id: str
     allowed_actions: frozenset[str]
     allowed_origins: frozenset[str] = frozenset()
+    allowed_url_prefixes: frozenset[str] = frozenset()
     requires_approval: frozenset[str] = SENSITIVE_ACTIONS
 
     def __post_init__(self) -> None:
@@ -186,9 +187,13 @@ class TaskContract:
             if isinstance(item, str) and item.strip()
         )
         origins = frozenset(_normalize_origin(item) for item in self.allowed_origins)
+        prefixes = frozenset(_normalize_url_prefix(item) for item in self.allowed_url_prefixes)
+        if any(_origin_from_url(item) not in origins for item in prefixes):
+            raise ValueError("allowed URL prefixes must belong to an allowed origin")
         object.__setattr__(self, "allowed_actions", actions)
         object.__setattr__(self, "requires_approval", approvals)
         object.__setattr__(self, "allowed_origins", origins)
+        object.__setattr__(self, "allowed_url_prefixes", prefixes)
 
 
 @dataclass(frozen=True)
@@ -221,6 +226,59 @@ def _origin_from_url(url: str) -> str:
     default_port = 80 if scheme == "http" else 443
     suffix = "" if port is None or port == default_port else f":{port}"
     return f"{scheme}://{host}{suffix}"
+
+
+def _safe_url_path(url: str) -> str:
+    """Canonicalize a URL path conservatively; ambiguous encoded separators are denied."""
+    parsed = urlsplit(url)
+    raw_path = parsed.path or "/"
+    lowered = raw_path.lower()
+    if "%2f" in lowered or "%5c" in lowered or "\\" in raw_path:
+        raise ValueError("encoded or literal path separators are not allowed")
+    decoded = raw_path
+    for _ in range(3):
+        next_value = unquote(decoded)
+        if next_value == decoded:
+            break
+        decoded = next_value
+    if "\\" in decoded or any(part in {".", ".."} for part in decoded.split("/")):
+        raise ValueError("ambiguous or traversal URL path")
+    if not decoded.startswith("/"):
+        raise ValueError("URL path must be absolute")
+    return decoded
+
+
+def _normalize_url_prefix(url: str) -> str:
+    if not isinstance(url, str) or not url.strip():
+        raise ValueError("allowed URL prefixes must be non-empty absolute URLs")
+    try:
+        parsed = urlsplit(url.strip())
+        if parsed.query or parsed.fragment:
+            raise ValueError("URL prefixes must not contain query or fragment")
+        origin = _origin_from_url(url)
+        path = _safe_url_path(url)
+    except ValueError as exc:
+        raise ValueError("invalid allowed URL prefix") from exc
+    return origin + path.rstrip("/") if path != "/" else origin + "/"
+
+
+def url_is_within_prefix(url: str, allowed_prefixes: Any) -> bool:
+    """Return true only for an unambiguous URL path under an explicit task prefix."""
+    try:
+        origin = _origin_from_url(url)
+        path = _safe_url_path(url)
+        for prefix in allowed_prefixes:
+            prefix_origin = _origin_from_url(prefix)
+            prefix_path = _safe_url_path(prefix)
+            if origin == prefix_origin and (
+                path == prefix_path.rstrip("/")
+                or path.startswith(prefix_path.rstrip("/") + "/")
+                or prefix_path == "/"
+            ):
+                return True
+    except (TypeError, ValueError):
+        return False
+    return False
 
 
 def _normalize_origin(url: str) -> str:
@@ -256,6 +314,8 @@ def authorize_request(
             return PolicyDecision(False, "Target must be a valid HTTP(S) URL without embedded credentials", action, fingerprint)
         if origin not in contract.allowed_origins:
             return PolicyDecision(False, "Target origin is outside the task contract", action, fingerprint)
+        if not url_is_within_prefix(request.target_url, contract.allowed_url_prefixes):
+            return PolicyDecision(False, "Target URL path is outside the explicitly approved task prefixes", action, fingerprint)
 
     exact_approval = (
         isinstance(approval, ApprovalGrant)
