@@ -68,6 +68,7 @@ class OpenAIPlanner:
         max_observation_chars: int = 6000,
         max_api_calls: int = 8,
         usage_callback: Callable[[dict[str, int | str]], None] | None = None,
+        request_guard: Callable[[], None] | None = None,
         client: Any | None = None,
     ) -> None:
         if not isinstance(task, str) or not task.strip():
@@ -92,6 +93,8 @@ class OpenAIPlanner:
             raise ValueError("max_api_calls must be a positive integer")
         if usage_callback is not None and not callable(usage_callback):
             raise TypeError("usage_callback must be callable")
+        if request_guard is not None and not callable(request_guard):
+            raise TypeError("request_guard must be callable")
 
         self._task = task.strip()
         self._model = model or os.getenv("SENTINEL_OPENAI_MODEL", "gpt-4.1-mini")
@@ -101,6 +104,8 @@ class OpenAIPlanner:
         self._max_observation_chars = max_observation_chars
         self._max_api_calls = max_api_calls
         self._usage_callback = usage_callback
+        self._request_guard = request_guard
+        self._last_error = ""
         self._request_count = 0
         self._prompt_tokens = 0
         self._completion_tokens = 0
@@ -128,6 +133,10 @@ class OpenAIPlanner:
             "completion_tokens": self._completion_tokens,
             "total_tokens": self._total_tokens,
         }
+
+    @property
+    def last_error(self) -> str:
+        return self._last_error
 
     def _record_usage(self, response: Any | None = None) -> None:
         usage = getattr(response, "usage", None) if response is not None else None
@@ -187,6 +196,12 @@ class OpenAIPlanner:
             raise RuntimeError(
                 f"OpenAI request limit reached ({self._max_api_calls} calls)"
             )
+        if self._request_guard is not None:
+            try:
+                self._request_guard()
+            except Exception as exc:
+                self._last_error = str(exc)
+                raise
         self._request_count += 1
         try:
             response = self._client.chat.completions.create(
@@ -201,7 +216,8 @@ class OpenAIPlanner:
             response_format={"type": "json_object"},
                 max_completion_tokens=500,
             )
-        except Exception:
+        except Exception as exc:
+            self._last_error = f"{type(exc).__name__}: {exc}"
             self._record_usage()
             raise
         self._record_usage(response)
