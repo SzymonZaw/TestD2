@@ -37,6 +37,7 @@ class RuntimeFailClosedTests(unittest.TestCase):
             task_id="task-2",
             allowed_actions=frozenset({"navigate"}),
             allowed_origins=frozenset({"https://example.com"}),
+            allowed_url_prefixes=frozenset({"https://example.com/"}),
         )
 
         def broken_handler(url, args):
