@@ -81,21 +81,36 @@ class ActionRequest:
         return hashlib.sha256(encoded).hexdigest()
 
 
+SENSITIVE_ACTIONS = frozenset({
+    "send_email", "send_message", "post_message", "submit_form",
+    "delete_file", "delete_record", "purchase", "upload_file",
+    "share_data", "run_shell",
+})
+
+
 @dataclass(frozen=True)
 class TaskContract:
     task_id: str
     allowed_actions: frozenset[str]
     allowed_origins: frozenset[str] = frozenset()
+    requires_approval: frozenset[str] = SENSITIVE_ACTIONS
 
     def __post_init__(self) -> None:
         if not isinstance(self.task_id, str) or not self.task_id.strip():
             raise ValueError("task_id must be a non-empty string")
+        if isinstance(self.allowed_actions, str) or isinstance(self.requires_approval, str):
+            raise TypeError("action collections must be sets or other iterables of action names")
         actions = frozenset(
             item.strip().lower() for item in self.allowed_actions
             if isinstance(item, str) and item.strip()
         )
+        approvals = frozenset(
+            item.strip().lower() for item in self.requires_approval
+            if isinstance(item, str) and item.strip()
+        )
         origins = frozenset(_normalize_origin(item) for item in self.allowed_origins)
         object.__setattr__(self, "allowed_actions", actions)
+        object.__setattr__(self, "requires_approval", approvals)
         object.__setattr__(self, "allowed_origins", origins)
 
 
@@ -165,14 +180,21 @@ def authorize_request(
         if origin not in contract.allowed_origins:
             return PolicyDecision(False, "Target origin is outside the task contract", action, fingerprint)
 
-    if action in contract.allowed_actions:
-        return PolicyDecision(True, "Action and target are within the task contract", action, fingerprint)
-
-    if (
+    exact_approval = (
         isinstance(approval, ApprovalGrant)
         and approval.task_id == request.task_id
         and approval.request_fingerprint == fingerprint
-    ):
+    )
+
+    if action in contract.requires_approval:
+        if exact_approval:
+            return PolicyDecision(True, "Sensitive action has an exact request approval", action, fingerprint)
+        return PolicyDecision(False, "Sensitive action requires approval for this exact request", action, fingerprint)
+
+    if action in contract.allowed_actions:
+        return PolicyDecision(True, "Action and target are within the task contract", action, fingerprint)
+
+    if exact_approval:
         return PolicyDecision(True, "Exact action request has an approval grant", action, fingerprint)
 
     return PolicyDecision(False, "Action is not permitted by the task contract and has no matching approval", action, fingerprint)
