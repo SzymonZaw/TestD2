@@ -14,6 +14,7 @@ from log_importer import LogValidationError, parse_experiment_logs
 from sentinel_core import DEFAULT_ALLOWED_ACTIONS, evaluate_proposal
 from statistical_analysis import describe_binary
 from openai_planner import OpenAIPlanner
+from api_usage import ApiUsageLedger
 from playwright_runner import run_browser_agent
 
 APP_DIR = Path(__file__).resolve().parent
@@ -448,6 +449,17 @@ def page_shield_prototype() -> None:
 
 
 
+def get_api_ledger() -> ApiUsageLedger:
+    return ApiUsageLedger(APP_DIR / "sentinel_api_usage.sqlite3")
+
+
+def daily_api_limit() -> int:
+    try:
+        return max(1, min(1000, int(os.getenv("SENTINEL_DAILY_API_CALL_LIMIT", "50"))))
+    except ValueError:
+        return 50
+
+
 def page_browser_agent() -> None:
     st.title("🤖 Agent przeglądarkowy")
     st.warning(
@@ -459,11 +471,12 @@ def page_browser_agent() -> None:
         return
 
     model = os.getenv("SENTINEL_OPENAI_MODEL", "gpt-4.1-mini")
+    ledger = get_api_ledger()
+    daily_limit = daily_api_limit()
+    daily_usage = ledger.snapshot()
     st.success(f"Klucz API wykryty — model: {model}. Wartość klucza nie jest wyświetlana.")
-    st.caption(
-        f"Zużycie w tej sesji aplikacji: {st.session_state.get('api_requests', 0)} żądań · "
-        f"{st.session_state.get('api_tokens', 0)} tokenów."
-    )
+    st.metric("Dzisiejsze zapytania OpenAI (UTC)", f"{daily_usage['request_count']} / {daily_limit}")
+    st.caption(f"Tokeny dzisiaj: {daily_usage['total_tokens']} · Limit jest wspólny dla wszystkich sesji aplikacji.")
     with st.form("browser_agent_run"):
         task = st.text_area("Zadanie dla agenta", placeholder="Otwórz stronę i przeczytaj jej publiczną zawartość.", max_chars=1000)
         origins_text = st.text_input("Dozwolone originy (oddziel przecinkami)", placeholder="https://example.com")
@@ -482,19 +495,34 @@ def page_browser_agent() -> None:
 
         st.session_state["api_requests_before_run"] = st.session_state.get("api_requests", 0)
         st.session_state["api_tokens_before_run"] = st.session_state.get("api_tokens", 0)
+        recorded_prompt = 0
+        recorded_completion = 0
 
         def record_usage(usage: dict[str, int | str]) -> None:
+            nonlocal recorded_prompt, recorded_completion
+            prompt_delta = int(usage["prompt_tokens"]) - recorded_prompt
+            completion_delta = int(usage["completion_tokens"]) - recorded_completion
+            if prompt_delta > 0 or completion_delta > 0:
+                ledger.record_tokens(prompt_delta, completion_delta)
+            recorded_prompt = int(usage["prompt_tokens"])
+            recorded_completion = int(usage["completion_tokens"])
             st.session_state["api_requests"] = st.session_state["api_requests_before_run"] + usage["request_count"]
             st.session_state["api_tokens"] = st.session_state["api_tokens_before_run"] + usage["total_tokens"]
 
         planner = None
         try:
-            planner = OpenAIPlanner(task, model=model, max_api_calls=max_calls, usage_callback=record_usage)
+            planner = OpenAIPlanner(
+                task, model=model, max_api_calls=max_calls,
+                usage_callback=record_usage,
+                request_guard=lambda: ledger.reserve_request(daily_limit),
+            )
             with st.spinner("Agent pracuje. Zapytania do OpenAI są wykonywane..."):
                 result = run_browser_agent("streamlit-agent", planner, origins, headless=headless, max_steps=max_calls)
             st.session_state["last_agent_usage"] = planner.usage
             st.subheader("Wynik uruchomienia")
             st.write(f"Status: **{result.stopped_reason}**")
+            if planner.last_error:
+                st.error(planner.last_error)
             st.write(f"Zadanie zakończone: **{'tak' if result.completed else 'nie'}**")
             st.write(f"Liczba kroków: **{len(result.observations)}**")
             st.json(planner.usage)
@@ -517,8 +545,13 @@ def page_api_status() -> None:
     configured = bool(os.getenv("OPENAI_API_KEY"))
     st.metric("Klucz OPENAI_API_KEY", "Wykryty" if configured else "Brak")
     st.write("Model:", os.getenv("SENTINEL_OPENAI_MODEL", "gpt-4.1-mini"))
-    st.write("Zapytania w tej sesji:", st.session_state.get("api_requests", 0))
-    st.write("Zużyte tokeny w tej sesji:", st.session_state.get("api_tokens", 0))
+    ledger = get_api_ledger()
+    daily = ledger.snapshot()
+    st.write("Dzisiejsze zapytania (UTC):", f"{daily['request_count']} / {daily_api_limit()}")
+    st.write("Dzisiejsze tokeny:", daily["total_tokens"])
+    st.write("W tym tokeny wejściowe:", daily["prompt_tokens"])
+    st.write("W tym tokeny wyjściowe:", daily["completion_tokens"])
+    st.write("Zapytania w bieżącej sesji UI:", st.session_state.get("api_requests", 0))
     last = st.session_state.get("last_agent_usage")
     if last:
         st.subheader("Ostatnie uruchomienie")
@@ -526,7 +559,8 @@ def page_api_status() -> None:
     st.info(
         "Klucz jest pobierany ze zmiennej środowiskowej i nigdy nie jest pokazywany w interfejsie. "
         "Wywołania API następują dopiero po ręcznym uruchomieniu agenta. "
-        "Każde uruchomienie ma limit zapytań i limit 500 tokenów odpowiedzi na jedno zapytanie."
+        f"Każde uruchomienie ma limit zapytań, a wspólny dzienny limit wynosi {daily_api_limit()} żądań. "
+        "Limit odpowiedzi to 500 tokenów na jedno zapytanie."
     )
     st.warning(
         "Aplikacja pokazuje liczbę żądań i tokeny raportowane przez API, ale nie wylicza ceny — "
@@ -575,11 +609,12 @@ def page_export() -> None:
 def main() -> None:
     st.session_state.setdefault("api_requests", 0)
     st.session_state.setdefault("api_tokens", 0)
+    daily = get_api_ledger().snapshot()
     with st.sidebar:
         st.title("🛡️ Sentinel AI Web Shield")
         configured = bool(os.getenv("OPENAI_API_KEY"))
         st.markdown(f"**OpenAI API:** {'🟢 skonfigurowane' if configured else '🔴 brak klucza'}")
-        st.caption(f"Żądania: {st.session_state['api_requests']} · Tokeny: {st.session_state['api_tokens']}")
+        st.caption(f"Dziś: {daily['request_count']} / {daily_api_limit()} żądań · {daily['total_tokens']} tokenów")
         st.divider()
         page = st.radio("Nawigacja", ["Ochrona treści", "Agent przeglądarkowy", "Status i kontrola API"])
     pages = {
