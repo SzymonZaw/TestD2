@@ -123,6 +123,8 @@ class PlaywrightBrowserAdapter:
         final_url = self._page.url
         if _origin(final_url) not in self._allowed_origins:
             raise PermissionError("navigation ended outside the adapter origin allowlist")
+        if not url_is_within_prefix(final_url, self._allowed_url_prefixes):
+            raise PermissionError("navigation ended outside the explicitly approved URL path prefixes")
         return final_url
 
     def read_page(self, target_url: str, arguments: dict[str, Any]) -> TrackedText:
