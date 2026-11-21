@@ -1,6 +1,7 @@
 import unittest
 
 from log_importer import LogValidationError, parse_experiment_logs
+from policy import ActionRequest, ApprovalGrant, TaskContract, authorize_request
 from sentinel_core import assess_web_content, authorize_action
 from statistical_analysis import wilson_interval
 
@@ -15,9 +16,63 @@ class SentinelPrototypeTests(unittest.TestCase):
         result = assess_web_content("The page describes opening hours and contact details.")
         self.assertFalse(result.suspicious)
 
+    def test_invalid_threshold_is_rejected(self):
+        with self.assertRaises(ValueError):
+            assess_web_content("hello", threshold=-1)
+        with self.assertRaises(ValueError):
+            assess_web_content("hello", threshold=True)
+
     def test_action_allowlist_denies_unknown(self):
         self.assertFalse(authorize_action("send_email").allowed)
         self.assertTrue(authorize_action("read_page").allowed)
+
+    def test_approval_boolean_is_not_an_authorization_mechanism(self):
+        with self.assertRaises(TypeError):
+            authorize_action("send_email", user_approved=True)
+
+    def test_task_contract_allows_scoped_action(self):
+        contract = TaskContract(
+            task_id="task-1",
+            allowed_actions=frozenset({"read_page"}),
+            allowed_origins=frozenset({"https://example.com"}),
+        )
+        request = ActionRequest("task-1", "READ_PAGE", "https://example.com/path")
+        self.assertTrue(authorize_request(request, contract).allowed)
+
+    def test_task_contract_rejects_wrong_task_and_origin(self):
+        contract = TaskContract(
+            task_id="task-1",
+            allowed_actions=frozenset({"read_page"}),
+            allowed_origins=frozenset({"https://example.com"}),
+        )
+        wrong_task = ActionRequest("task-2", "read_page", "https://example.com/")
+        wrong_origin = ActionRequest("task-1", "read_page", "https://evil.example/")
+        self.assertFalse(authorize_request(wrong_task, contract).allowed)
+        self.assertFalse(authorize_request(wrong_origin, contract).allowed)
+
+    def test_approval_is_bound_to_exact_arguments(self):
+        contract = TaskContract("task-1", frozenset({"read_page"}))
+        approved = ActionRequest("task-1", "send_email", arguments={"to": "a@example.com", "body": "hello"})
+        grant = ApprovalGrant("task-1", approved.fingerprint())
+        self.assertTrue(authorize_request(approved, contract, grant).allowed)
+
+        changed_recipient = ActionRequest(
+            "task-1", "send_email", arguments={"to": "attacker@example.com", "body": "hello"}
+        )
+        self.assertFalse(authorize_request(changed_recipient, contract, grant).allowed)
+
+    def test_approval_cannot_override_task_origin_boundary(self):
+        contract = TaskContract(
+            "task-1", frozenset(), frozenset({"https://example.com"})
+        )
+        request = ActionRequest("task-1", "submit_form", "https://evil.example/submit", {"x": "y"})
+        grant = ApprovalGrant("task-1", request.fingerprint())
+        self.assertFalse(authorize_request(request, contract, grant).allowed)
+
+    def test_non_json_action_arguments_fail_closed(self):
+        request = ActionRequest("task-1", "submit_form", arguments={"bad": object()})
+        with self.assertRaises(ValueError):
+            request.fingerprint()
 
     def test_json_import(self):
         raw = '{"scenario_key":"ADV-01","configuration":"baseline","trial_no":1,"category":"adversarial"}'
