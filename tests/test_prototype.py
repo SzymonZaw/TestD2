@@ -2,6 +2,7 @@ import unittest
 
 from log_importer import LogValidationError, parse_experiment_logs
 from policy import ActionRequest, ApprovalGrant, TaskContract, authorize_request
+from execution_gateway import ExecutionGateway
 from sentinel_core import assess_web_content, authorize_action
 from statistical_analysis import wilson_interval
 
@@ -70,9 +71,8 @@ class SentinelPrototypeTests(unittest.TestCase):
         self.assertFalse(authorize_request(request, contract, grant).allowed)
 
     def test_non_json_action_arguments_fail_closed(self):
-        request = ActionRequest("task-1", "submit_form", arguments={"bad": object()})
         with self.assertRaises(ValueError):
-            request.fingerprint()
+            ActionRequest("task-1", "submit_form", arguments={"bad": object()})
 
     def test_action_arguments_are_snapshotted_before_approval(self):
         arguments = {"to": "a@example.com", "body": "hello"}
@@ -86,6 +86,62 @@ class SentinelPrototypeTests(unittest.TestCase):
         contract = TaskContract("task-1", frozenset({"read_page"}), frozenset({"https://example.com"}))
         request = ActionRequest("task-1", "read_page", "http://[::1")
         self.assertFalse(authorize_request(request, contract).allowed)
+
+    def test_gateway_never_calls_handler_for_denied_action(self):
+        calls = []
+        gateway = ExecutionGateway(
+            TaskContract("task-1", frozenset({"read_page"})),
+            {"send_email": lambda url, args: calls.append((url, args))},
+        )
+        request = ActionRequest("task-1", "send_email", arguments={"to": "victim@example.com"})
+        result = gateway.execute(request)
+        self.assertFalse(result.allowed)
+        self.assertFalse(result.executed)
+        self.assertEqual(calls, [])
+
+    def test_gateway_requires_exact_approval_for_sensitive_allowlisted_action(self):
+        calls = []
+        contract = TaskContract("task-1", frozenset({"send_email"}))
+        gateway = ExecutionGateway(contract, {"send_email": lambda url, args: calls.append((url, args)) or "sent"})
+        request = ActionRequest("task-1", "send_email", arguments={"to": "person@example.com", "body": "hello"})
+        denied = gateway.execute(request)
+        self.assertFalse(denied.executed)
+        self.assertEqual(calls, [])
+        grant = ApprovalGrant("task-1", request.fingerprint())
+        approved = gateway.execute(request, grant)
+        self.assertTrue(approved.allowed)
+        self.assertTrue(approved.executed)
+        self.assertEqual(approved.output, "sent")
+        self.assertEqual(calls, [("", {"to": "person@example.com", "body": "hello"})])
+
+    def test_gateway_executes_only_snapshotted_arguments(self):
+        calls = []
+        arguments = {"to": "safe@example.com"}
+        request = ActionRequest("task-1", "send_email", arguments=arguments)
+        grant = ApprovalGrant("task-1", request.fingerprint())
+        arguments["to"] = "attacker@example.com"
+        gateway = ExecutionGateway(TaskContract("task-1", frozenset()), {"send_email": lambda url, args: calls.append(args) or args["to"]})
+        result = gateway.execute(request, grant)
+        self.assertTrue(result.executed)
+        self.assertEqual(result.output, "safe@example.com")
+        self.assertEqual(calls, [{"to": "safe@example.com"}])
+
+    def test_gateway_rejects_origin_even_with_exact_approval(self):
+        calls = []
+        request = ActionRequest("task-1", "submit_form", "https://evil.example/submit", {"x": "1"})
+        grant = ApprovalGrant("task-1", request.fingerprint())
+        gateway = ExecutionGateway(TaskContract("task-1", frozenset(), frozenset({"https://trusted.example"})), {"submit_form": lambda url, args: calls.append(url)})
+        result = gateway.execute(request, grant)
+        self.assertFalse(result.allowed)
+        self.assertFalse(result.executed)
+        self.assertEqual(calls, [])
+
+    def test_gateway_does_not_execute_unregistered_action(self):
+        gateway = ExecutionGateway(TaskContract("task-1", frozenset({"read_page"})), {})
+        request = ActionRequest("task-1", "read_page")
+        result = gateway.execute(request)
+        self.assertFalse(result.allowed)
+        self.assertFalse(result.executed)
 
     def test_json_import(self):
         raw = '{"scenario_key":"ADV-01","configuration":"baseline","trial_no":1,"category":"adversarial"}'
