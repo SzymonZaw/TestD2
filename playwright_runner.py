@@ -48,7 +48,7 @@ def run_browser_agent(
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=headless)
         try:
-            context = browser.new_context(service_workers="block")
+            context = browser.new_context(service_workers="block", java_script_enabled=False)
             try:
                 page = context.new_page()
                 adapter = PlaywrightBrowserAdapter(page, origins, contract.allowed_url_prefixes)
