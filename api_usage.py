@@ -51,7 +51,7 @@ class ApiUsageLedger:
         if isinstance(daily_limit, bool) or not isinstance(daily_limit, int) or daily_limit < 1:
             raise ValueError("daily_limit must be a positive integer")
         today = self._today()
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             connection.execute(
                 "INSERT OR IGNORE INTO api_usage(usage_date) VALUES(?)", (today,)
@@ -75,7 +75,7 @@ class ApiUsageLedger:
     def record_tokens(self, prompt_tokens: int, completion_tokens: int) -> None:
         prompt = max(0, int(prompt_tokens))
         completion = max(0, int(completion_tokens))
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 """
                 UPDATE api_usage
@@ -88,7 +88,7 @@ class ApiUsageLedger:
 
     def snapshot(self) -> dict[str, int | str]:
         today = self._today()
-        with self._connect() as connection:
+        with self._connection() as connection:
             row = connection.execute(
                 "SELECT * FROM api_usage WHERE usage_date=?", (today,)
             ).fetchone()
