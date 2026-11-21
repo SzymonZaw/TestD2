@@ -132,6 +132,20 @@ class OpenAIPlannerTests(unittest.TestCase):
             planner(())
         self.assertEqual(planner.usage["request_count"], 1)
 
+
+    def test_planner_request_guard_blocks_before_openai_call(self):
+        client = _FakeClient(json.dumps({"action": "finish", "target_url": "", "arguments": {}}))
+
+        def deny_request():
+            raise RuntimeError("daily quota reached")
+
+        planner = OpenAIPlanner("Done", client=client, request_guard=deny_request)
+        with self.assertRaisesRegex(RuntimeError, "daily quota reached"):
+            planner(())
+        self.assertEqual(planner.usage["request_count"], 0)
+        self.assertIsNone(client.chat.completions.kwargs)
+        self.assertEqual(planner.last_error, "daily quota reached")
+
     def test_runtime_stops_when_planner_api_fails(self):
         gateway = ExecutionGateway(
             TaskContract("planner-task", frozenset({"read_page"})),
