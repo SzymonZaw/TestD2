@@ -101,16 +101,24 @@ class BrowserAgentRuntime:
                     "planner_returned_invalid_proposal", False
                 )
 
-            request = ActionRequest.from_tracked_arguments(
-                task_id=self._task_id,
-                action=proposal.action,
-                target_url=proposal.target_url,
-                arguments=proposal.arguments,
-            )
-            approval = (
-                self._approval_provider(request)
-                if self._approval_provider is not None else None
-            )
+            try:
+                request = ActionRequest.from_tracked_arguments(
+                    task_id=self._task_id,
+                    action=proposal.action,
+                    target_url=proposal.target_url,
+                    arguments=proposal.arguments,
+                )
+                approval = (
+                    self._approval_provider(request)
+                    if self._approval_provider is not None else None
+                )
+            except Exception:
+                # Invalid requests and approval-provider failures are terminal.
+                # Never let an approval integration error escape the runtime.
+                return AgentRunResult(
+                    self._task_id, tuple(observations),
+                    "request_or_approval_error", False
+                )
             result = self._gateway.execute(request, approval)
             observations.append(
                 AgentObservation(proposal.action, proposal.target_url, result)
