@@ -30,8 +30,10 @@ class ExecutionGateway:
     """Authorize each exact request immediately before invoking its handler.
 
     Handlers receive the immutable request's copied argument snapshot, not the
-    caller's original dictionary. ApprovalGrant is only as trustworthy as the
-    component that creates it; this gateway does not authenticate humans.
+    caller's original dictionary. ApprovalGrant is treated only as a claim:
+    approvals fail closed unless a trusted approval_verifier authenticates the
+    grant against the exact request. The verifier must itself enforce the
+    application's human-authentication and approval workflow.
     """
 
     def __init__(
