@@ -97,11 +97,12 @@ class PlaywrightBrowserAdapter:
     def _guard_request(self, route: Any) -> None:
         try:
             request_url = route.request.url
-            is_navigation = route.request.is_navigation_request()
+            method = route.request.method.upper()
             allowed = (
-                _origin(request_url) in self._allowed_origins
+                method in {"GET", "HEAD"}
+                and _origin(request_url) in self._allowed_origins
+                and url_is_within_prefix(request_url, self._allowed_url_prefixes)
                 and _has_public_destination(request_url)
-                and (not is_navigation or url_is_within_prefix(request_url, self._allowed_url_prefixes))
             )
         except (AttributeError, TypeError, ValueError):
             allowed = False
