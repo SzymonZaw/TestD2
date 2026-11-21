@@ -4,6 +4,7 @@ from log_importer import LogValidationError, parse_experiment_logs
 from policy import ActionRequest, ApprovalGrant, TaskContract, authorize_request
 from execution_gateway import ExecutionGateway
 from browser_adapter import PlaywrightBrowserAdapter
+from agent_runtime import AgentProposal, BrowserAgentRuntime
 from ifc import assess_action_flow
 from provenance import TrackedText
 from sentinel_core import assess_web_content, authorize_action
@@ -348,6 +349,80 @@ class SentinelPrototypeTests(unittest.TestCase):
     def test_browser_adapter_rejects_unapproved_origin_configuration(self):
         with self.assertRaises(ValueError):
             PlaywrightBrowserAdapter(_FakePage(), set())
+
+
+
+    def test_agent_runtime_runs_only_gateway_navigation_and_read_steps(self):
+        page = _FakePage()
+        adapter = PlaywrightBrowserAdapter(page, {"https://example.com"})
+        gateway = ExecutionGateway(
+            TaskContract(
+                "agent-task", frozenset({"navigate", "read_page"}),
+                frozenset({"https://example.com"}),
+            ),
+            adapter.handlers,
+        )
+
+        def planner(history):
+            if len(history) == 0:
+                return AgentProposal("navigate", "https://example.com/start")
+            if len(history) == 1:
+                return AgentProposal("read_page", "https://example.com/start")
+            return None
+
+        result = BrowserAgentRuntime("agent-task", gateway, planner).run()
+        self.assertTrue(result.completed)
+        self.assertEqual(result.stopped_reason, "planner_finished")
+        self.assertEqual([item.action for item in result.observations], ["navigate", "read_page"])
+        self.assertIsInstance(result.observations[1].result.output, TrackedText)
+        self.assertFalse(result.observations[1].result.output.is_trusted)
+
+    def test_agent_runtime_carries_page_taint_into_sensitive_action(self):
+        page = _FakePage()
+        adapter = PlaywrightBrowserAdapter(page, {"https://example.com"})
+        calls = []
+        handlers = adapter.handlers
+        handlers["send_email"] = lambda url, args: calls.append(args) or "sent"
+        gateway = ExecutionGateway(
+            TaskContract(
+                "agent-task", frozenset({"navigate", "read_page", "send_email"}),
+                frozenset({"https://example.com"}),
+            ),
+            handlers,
+        )
+
+        def planner(history):
+            if len(history) == 0:
+                return AgentProposal("navigate", "https://example.com/start")
+            if len(history) == 1:
+                return AgentProposal("read_page", "https://example.com/start")
+            if len(history) == 2:
+                page_text = history[1].result.output
+                return AgentProposal(
+                    "send_email", arguments={"body": page_text, "to": "user@example.com"}
+                )
+            return None
+
+        result = BrowserAgentRuntime("agent-task", gateway, planner).run()
+        self.assertFalse(result.completed)
+        self.assertEqual(result.stopped_reason, "gateway_denied_action")
+        self.assertEqual(result.observations[-1].action, "send_email")
+        self.assertFalse(result.observations[-1].result.executed)
+        self.assertEqual(calls, [])
+
+    def test_agent_runtime_enforces_step_limit(self):
+        gateway = ExecutionGateway(
+            TaskContract("agent-task", frozenset({"read_page"})),
+            {"read_page": lambda url, args: "ok"},
+        )
+        result = BrowserAgentRuntime(
+            "agent-task", gateway,
+            lambda history: AgentProposal("read_page") ,
+            max_steps=2,
+        ).run()
+        self.assertFalse(result.completed)
+        self.assertEqual(result.stopped_reason, "step_limit_reached")
+        self.assertEqual(len(result.observations), 2)
 
 
 
