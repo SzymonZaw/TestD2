@@ -12,6 +12,7 @@ from typing import Any, Iterable
 from urllib.parse import urlsplit
 
 from provenance import TrackedText
+from policy import url_is_within_prefix
 
 
 def _has_public_destination(url: str) -> bool:
@@ -66,13 +67,20 @@ class PlaywrightBrowserAdapter:
     gateway remains the only supported entry point for these handlers.
     """
 
-    def __init__(self, page: Any, allowed_origins: Iterable[str]) -> None:
+    def __init__(self, page: Any, allowed_origins: Iterable[str], allowed_url_prefixes: Iterable[str]) -> None:
         if page is None or not callable(getattr(page, "route", None)):
             raise TypeError("page must be a synchronous Playwright Page-like object")
         if isinstance(allowed_origins, str):
             raise TypeError("allowed_origins must be a collection, not a string")
         self._page = page
         self._allowed_origins = frozenset(_origin(item) for item in allowed_origins)
+        if isinstance(allowed_url_prefixes, str):
+            raise TypeError("allowed_url_prefixes must be a collection, not a string")
+        self._allowed_url_prefixes = tuple(allowed_url_prefixes)
+        if not self._allowed_url_prefixes:
+            raise ValueError("at least one approved URL path prefix is required")
+        if any(_origin(item) not in self._allowed_origins for item in self._allowed_url_prefixes):
+            raise ValueError("URL path prefixes must belong to an allowed origin")
         if not self._allowed_origins:
             raise ValueError("at least one allowed origin is required")
         # Intercept every document and subresource request, including redirects.
@@ -89,9 +97,11 @@ class PlaywrightBrowserAdapter:
     def _guard_request(self, route: Any) -> None:
         try:
             request_url = route.request.url
+            is_navigation = route.request.is_navigation_request()
             allowed = (
                 _origin(request_url) in self._allowed_origins
                 and _has_public_destination(request_url)
+                and (not is_navigation or url_is_within_prefix(request_url, self._allowed_url_prefixes))
             )
         except (AttributeError, TypeError, ValueError):
             allowed = False
@@ -105,6 +115,8 @@ class PlaywrightBrowserAdapter:
             raise ValueError("navigate does not accept additional arguments")
         if _origin(target_url) not in self._allowed_origins:
             raise PermissionError("navigation target is outside the adapter origin allowlist")
+        if not url_is_within_prefix(target_url, self._allowed_url_prefixes):
+            raise PermissionError("navigation target is outside the explicitly approved URL path prefixes")
         if not _has_public_destination(target_url):
             raise PermissionError("navigation target resolves to a non-public or unverifiable address")
         self._page.goto(target_url, wait_until="domcontentloaded")
@@ -123,5 +135,7 @@ class PlaywrightBrowserAdapter:
             raise PermissionError("current page is outside the adapter origin allowlist")
         if _origin(current_url) != _origin(target_url):
             raise PermissionError("read target origin does not match the current page")
+        if not url_is_within_prefix(target_url, self._allowed_url_prefixes):
+            raise PermissionError("read target is outside the explicitly approved URL path prefixes")
         text = self._page.locator("body").inner_text()
         return TrackedText.from_web(text, current_url)
