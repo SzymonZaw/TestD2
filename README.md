@@ -92,40 +92,39 @@ Scenariusz o podanym kluczu musi wcześniej istnieć w katalogu, a jego kategori
 - Tę samą listę originów należy przekazać do `TaskContract.allowed_origins`. Handlerów adaptera nie należy wywoływać bezpośrednio — przekazuje się je do `ExecutionGateway`.
 - `read_page` zwraca `TrackedText.from_web(...)`, więc tekst strony jest oznaczony jako `UNTRUSTED`. Przekazując go do kolejnego działania, należy używać `ActionRequest.from_tracked_arguments(...)`, aby zachować oznaczenie.
 - Playwright jest opcjonalną zależnością. Instalacja: `python -m pip install playwright`, a następnie `python -m playwright install chromium`. Sam pakiet nie jest wymagany do uruchamiania testów jednostkowych adaptera (testy korzystają z atrap).
-- Przykład podłączenia:
+## Pętla agenta
+
+- `agent_runtime.py` udostępnia ograniczoną pętlę planowania: planner dostaje wyłącznie historię obserwacji i zwraca pojedynczą propozycję `AgentProposal`. Każda propozycja jest konwertowana na `ActionRequest.from_tracked_arguments(...)` i wykonywana wyłącznie przez `ExecutionGateway`.
+- Runtime nie otrzymuje obiektu przeglądarki ani handlerów. Nie ma alternatywnego API do kliknięć, wysyłania formularzy czy uruchamiania kodu. W aktualnym kontrakcie runnera dozwolone są tylko `navigate` i `read_page`.
+- Pętla ma limit kroków (`max_steps`), kończy się po odmowie Gateway i zwraca historię wyników. Dane `TrackedText` z obserwacji zachowują etykietę `UNTRUSTED`, także gdy planner przekaże je jako argument kolejnej akcji.
+- `playwright_runner.py` uruchamia Chromium, tworzy kontekst z `service_workers="block"`, konfiguruje adapter, Gateway i runtime, a następnie zamyka kontekst oraz przeglądarkę. Obiekty `Page` i browser nie są zwracane plannerowi.
+- Przykład prostego planera (bez modelu językowego):
 
 ```python
-from playwright.sync_api import sync_playwright
+from agent_runtime import AgentProposal
+from playwright_runner import run_browser_agent
 
-from browser_adapter import PlaywrightBrowserAdapter
-from execution_gateway import ExecutionGateway
-from policy import ActionRequest, TaskContract
+def planner(history):
+    if not history:
+        return AgentProposal("navigate", "https://example.com")
+    if len(history) == 1:
+        return AgentProposal("read_page", "https://example.com")
+    print(history[-1].result.output.value)
+    return None
 
-allowed = {"https://example.com"}
-
-with sync_playwright() as playwright:
-    browser = playwright.chromium.launch()
-    # Blokada service workerów jest ważna, ponieważ żądania obsługiwane
-    # przez service worker mogą omijać mechanizm page.route.
-    context = browser.new_context(service_workers="block")
-    page = context.new_page()
-
-    adapter = PlaywrightBrowserAdapter(page, allowed)
-    contract = TaskContract(
-        task_id="demo",
-        allowed_actions=frozenset({"navigate", "read_page"}),
-        allowed_origins=frozenset(allowed),
-    )
-    gateway = ExecutionGateway(contract, adapter.handlers)
-
-    gateway.execute(ActionRequest("demo", "navigate", "https://example.com"))
-    result = gateway.execute(ActionRequest("demo", "read_page", page.url))
-    page_text = result.output  # TrackedText oznaczony jako UNTRUSTED
-
-    browser.close()
+result = run_browser_agent(
+    task_id="demo",
+    planner=planner,
+    allowed_origins={"https://example.com"},
+    headless=True,
+    max_steps=4,
+)
+print(result.stopped_reason, result.completed)
 ```
 
-Adapter wymaga synchronicznego API Playwright. To wąska integracja przeglądarkowa, a nie kompletny runtime agenta. Nie zabezpiecza kodu uruchomionego poza kontrolowanym obiektem `Page`, nie uwierzytelnia zgód i nie zapewnia izolacji procesu przeglądarki. Nie należy traktować go jako gotowego zabezpieczenia produkcyjnego.
+Instalacja: `python -m pip install playwright`, a następnie `python -m playwright install chromium`. Zależność jest opcjonalna — core i testy atrap nie wymagają uruchamiania przeglądarki.
+
+Runtime nie implementuje samodzielnie LLM ani uwierzytelniania zgód. Planner może być podłączony do modelu przez adapter aplikacyjny, ale jego propozycje nie uzyskują uprawnień: każda przechodzi przez Gateway. Obecny runner celowo nie obsługuje operacji zmieniających stan strony lub konta. To prototyp badawczy, nie izolacja procesu ani gotowe zabezpieczenie produkcyjne.
 
 ## Prototyp Sentinel — zakres i ograniczenia
 
