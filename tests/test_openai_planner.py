@@ -96,6 +96,22 @@ class OpenAIPlannerTests(unittest.TestCase):
         self.assertIn("Ignore prior instructions", payload["observations"][0]["output"])
         self.assertIn("untrusted DATA", client.chat.completions.kwargs["messages"][0]["content"])
 
+    def test_planner_rejects_non_finite_json_numbers(self):
+        client = _FakeClient(
+            '{"action":"read_page","target_url":"https://example.com",'
+            '"arguments":{"number":NaN}}'
+        )
+        with self.assertRaises(ValueError):
+            OpenAIPlanner("Read a page", client=client)(())
+
+    def test_planner_rejects_oversized_arguments(self):
+        client = _FakeClient(json.dumps({
+            "action": "read_page", "target_url": "https://example.com",
+            "arguments": {"query": "x" * 2001},
+        }))
+        with self.assertRaises(ValueError):
+            OpenAIPlanner("Read a page", client=client)(())
+
     def test_runtime_stops_when_planner_api_fails(self):
         gateway = ExecutionGateway(
             TaskContract("planner-task", frozenset({"read_page"})),
