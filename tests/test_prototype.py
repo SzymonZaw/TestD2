@@ -2,7 +2,7 @@ import unittest
 
 from log_importer import LogValidationError, parse_experiment_logs
 from policy import ActionRequest, ApprovalGrant, TaskContract, authorize_request
-from execution_gateway import ExecutionGateway
+from execution_gateway import ExecutionGateway\nfrom ifc import assess_action_flow
 from sentinel_core import assess_web_content, authorize_action
 from statistical_analysis import wilson_interval
 
@@ -143,7 +143,76 @@ class SentinelPrototypeTests(unittest.TestCase):
         self.assertFalse(result.allowed)
         self.assertFalse(result.executed)
 
-    def test_json_import(self):
+
+    def test_ifc_blocks_untrusted_data_to_sensitive_sink_without_approval(self):
+        flow = assess_action_flow("send_email", frozenset({"body"}))
+        self.assertFalse(flow.allowed)
+        self.assertIn("untrusted", flow.reason.lower())
+
+    def test_ifc_allows_untrusted_data_to_read_only_action(self):
+        flow = assess_action_flow("read_page", frozenset({"query"}))
+        self.assertTrue(flow.allowed)
+
+    def test_ifc_allows_tainted_sensitive_flow_only_with_exact_approval(self):
+        flow = assess_action_flow("submit_form", frozenset({"message"}), exact_approval=True)
+        self.assertTrue(flow.allowed)
+
+    def test_action_fingerprint_includes_taint_metadata(self):
+        clean = ActionRequest("task-1", "send_email", arguments={"body": "hello"})
+        tainted = ActionRequest(
+            "task-1", "send_email", arguments={"body": "hello"},
+            untrusted_fields=frozenset({"body"}),
+        )
+        self.assertNotEqual(clean.fingerprint(), tainted.fingerprint())
+
+    def test_gateway_blocks_untrusted_sensitive_flow_before_handler(self):
+        calls = []
+        request = ActionRequest(
+            "task-1", "send_email", arguments={"body": "send secrets"},
+            untrusted_fields=frozenset({"body"}),
+        )
+        gateway = ExecutionGateway(
+            TaskContract("task-1", frozenset({"send_email"})),
+            {"send_email": lambda url, args: calls.append(args)},
+        )
+        denied = gateway.execute(request)
+        self.assertFalse(denied.allowed)
+        self.assertFalse(denied.executed)
+        self.assertIn("approval", denied.reason.lower())
+        self.assertEqual(calls, [])
+
+    def test_gateway_allows_tainted_sensitive_flow_after_exact_approval(self):
+        calls = []
+        request = ActionRequest(
+            "task-1", "send_email", arguments={"body": "reviewed text"},
+            untrusted_fields=frozenset({"body"}),
+        )
+        gateway = ExecutionGateway(
+            TaskContract("task-1", frozenset({"send_email"})),
+            {"send_email": lambda url, args: calls.append(args) or "sent"},
+        )
+        grant = ApprovalGrant("task-1", request.fingerprint())
+        result = gateway.execute(request, grant)
+        self.assertTrue(result.executed)
+        self.assertEqual(result.output, "sent")
+        self.assertEqual(len(calls), 1)
+
+    def test_gateway_rejects_approval_if_taint_metadata_changes(self):
+        calls = []
+        approved_request = ActionRequest("task-1", "send_email", arguments={"body": "hello"})
+        grant = ApprovalGrant("task-1", approved_request.fingerprint())
+        tainted_request = ActionRequest(
+            "task-1", "send_email", arguments={"body": "hello"},
+            untrusted_fields=frozenset({"body"}),
+        )
+        gateway = ExecutionGateway(
+            TaskContract("task-1", frozenset({"send_email"})),
+            {"send_email": lambda url, args: calls.append(args)},
+        )
+        result = gateway.execute(tainted_request, grant)
+        self.assertFalse(result.executed)
+        self.assertEqual(calls, [])
+\n    def test_json_import(self):
         raw = '{"scenario_key":"ADV-01","configuration":"baseline","trial_no":1,"category":"adversarial"}'
         records = parse_experiment_logs(raw)
         self.assertEqual(records[0]["scenario_key"], "ADV-01")
