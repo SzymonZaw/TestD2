@@ -15,6 +15,7 @@ from statistical_analysis import wilson_interval
 class _FakeRouteRequest:
     def __init__(self, url):
         self.url = url
+        self.method = "GET"
 
 
 class _FakeRoute:
@@ -85,6 +86,7 @@ class SentinelPrototypeTests(unittest.TestCase):
             task_id="task-1",
             allowed_actions=frozenset({"read_page"}),
             allowed_origins=frozenset({"https://example.com"}),
+            allowed_url_prefixes=frozenset({"https://example.com/path"}),
         )
         request = ActionRequest("task-1", "READ_PAGE", "https://example.com/path")
         self.assertTrue(authorize_request(request, contract).allowed)
@@ -151,7 +153,12 @@ class SentinelPrototypeTests(unittest.TestCase):
     def test_gateway_requires_exact_approval_for_sensitive_allowlisted_action(self):
         calls = []
         contract = TaskContract("task-1", frozenset({"send_email"}))
-        gateway = ExecutionGateway(contract, {"send_email": lambda url, args: calls.append((url, args)) or "sent"})
+        gateway = ExecutionGateway(
+            contract, {"send_email": lambda url, args: calls.append((url, args)) or "sent"},
+            approval_verifier=lambda grant, req: (
+                grant.task_id == req.task_id and grant.request_fingerprint == req.fingerprint()
+            ),
+        )
         request = ActionRequest("task-1", "send_email", arguments={"to": "person@example.com", "body": "hello"})
         denied = gateway.execute(request)
         self.assertFalse(denied.executed)
@@ -169,7 +176,13 @@ class SentinelPrototypeTests(unittest.TestCase):
         request = ActionRequest("task-1", "send_email", arguments=arguments)
         grant = ApprovalGrant("task-1", request.fingerprint())
         arguments["to"] = "attacker@example.com"
-        gateway = ExecutionGateway(TaskContract("task-1", frozenset()), {"send_email": lambda url, args: calls.append(args) or args["to"]})
+        gateway = ExecutionGateway(
+            TaskContract("task-1", frozenset()),
+            {"send_email": lambda url, args: calls.append(args) or args["to"]},
+            approval_verifier=lambda grant, req: (
+                grant.task_id == req.task_id and grant.request_fingerprint == req.fingerprint()
+            ),
+        )
         result = gateway.execute(request, grant)
         self.assertTrue(result.executed)
         self.assertEqual(result.output, "safe@example.com")
@@ -247,6 +260,9 @@ class SentinelPrototypeTests(unittest.TestCase):
         gateway = ExecutionGateway(
             TaskContract("task-1", frozenset({"send_email"})),
             {"send_email": lambda url, args: calls.append(args) or "sent"},
+            approval_verifier=lambda grant, req: (
+                grant.task_id == req.task_id and grant.request_fingerprint == req.fingerprint()
+            ),
         )
         grant = ApprovalGrant("task-1", request.fingerprint())
         result = gateway.execute(request, grant)
@@ -288,7 +304,7 @@ class SentinelPrototypeTests(unittest.TestCase):
 
     def test_browser_adapter_routes_navigation_through_gateway(self):
         page = _FakePage()
-        adapter = PlaywrightBrowserAdapter(page, {"https://example.com"})
+        adapter = PlaywrightBrowserAdapter(page, {"https://example.com"}, {"https://example.com/"})
         contract = TaskContract(
             "browser-task", frozenset({"navigate", "read_page"}),
             frozenset({"https://example.com"}),
@@ -348,7 +364,7 @@ class SentinelPrototypeTests(unittest.TestCase):
 
     def test_browser_adapter_rejects_unapproved_origin_configuration(self):
         with self.assertRaises(ValueError):
-            PlaywrightBrowserAdapter(_FakePage(), set())
+            PlaywrightBrowserAdapter(_FakePage(), set(), set())
 
 
 
@@ -359,6 +375,7 @@ class SentinelPrototypeTests(unittest.TestCase):
             TaskContract(
                 "agent-task", frozenset({"navigate", "read_page"}),
                 frozenset({"https://example.com"}),
+                allowed_url_prefixes=frozenset({"https://example.com/"}),
             ),
             adapter.handlers,
         )
@@ -387,6 +404,7 @@ class SentinelPrototypeTests(unittest.TestCase):
             TaskContract(
                 "agent-task", frozenset({"navigate", "read_page", "send_email"}),
                 frozenset({"https://example.com"}),
+                allowed_url_prefixes=frozenset({"https://example.com/"}),
             ),
             handlers,
         )
