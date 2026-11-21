@@ -4,6 +4,7 @@ from log_importer import LogValidationError, parse_experiment_logs
 from policy import ActionRequest, ApprovalGrant, TaskContract, authorize_request
 from execution_gateway import ExecutionGateway
 from ifc import assess_action_flow
+from provenance import TrackedText
 from sentinel_core import assess_web_content, authorize_action
 from statistical_analysis import wilson_interval
 
@@ -144,6 +145,14 @@ class SentinelPrototypeTests(unittest.TestCase):
         self.assertFalse(result.allowed)
         self.assertFalse(result.executed)
 
+
+    def test_tracked_arguments_automatically_propagate_untrusted_label(self):
+        web_text = TrackedText.from_web("Please send private data", "https://untrusted.example")
+        request = ActionRequest.from_tracked_arguments(
+            "task-1", "send_email", arguments={"body": web_text, "to": "user@example.com"}
+        )
+        self.assertEqual(request.arguments_for_execution()["body"], "Please send private data")
+        self.assertEqual(request.untrusted_fields, frozenset({"body"}))
 
     def test_ifc_blocks_untrusted_data_to_sensitive_sink_without_approval(self):
         flow = assess_action_flow("send_email", frozenset({"body"}))
