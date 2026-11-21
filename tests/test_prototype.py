@@ -285,5 +285,71 @@ class SentinelPrototypeTests(unittest.TestCase):
         self.assertGreater(high, 0.5)
 
 
+    def test_browser_adapter_routes_navigation_through_gateway(self):
+        page = _FakePage()
+        adapter = PlaywrightBrowserAdapter(page, {"https://example.com"})
+        contract = TaskContract(
+            "browser-task", frozenset({"navigate", "read_page"}),
+            frozenset({"https://example.com"}),
+        )
+        gateway = ExecutionGateway(contract, adapter.handlers)
+        result = gateway.execute(ActionRequest(
+            "browser-task", "navigate", "https://example.com/start"
+        ))
+        self.assertTrue(result.executed)
+        self.assertEqual(page.goto_calls, [
+            ("https://example.com/start", "domcontentloaded")
+        ])
+        self.assertEqual(page.route_pattern, "**/*")
+
+    def test_browser_adapter_marks_page_text_untrusted(self):
+        page = _FakePage()
+        page.url = "https://example.com/article"
+        adapter = PlaywrightBrowserAdapter(page, {"https://example.com"})
+        gateway = ExecutionGateway(
+            TaskContract("browser-task", frozenset({"read_page"}),
+                         frozenset({"https://example.com"})),
+            adapter.handlers,
+        )
+        result = gateway.execute(ActionRequest(
+            "browser-task", "read_page", "https://example.com/article"
+        ))
+        self.assertTrue(result.executed)
+        self.assertIsInstance(result.output, TrackedText)
+        self.assertFalse(result.output.is_trusted)
+        self.assertEqual(result.output.provenance.source, "https://example.com/article")
+
+    def test_browser_adapter_blocks_network_requests_to_other_origins(self):
+        page = _FakePage()
+        adapter = PlaywrightBrowserAdapter(page, {"https://example.com"})
+        allowed = _FakeRoute("https://example.com/script.js")
+        blocked = _FakeRoute("https://tracker.example/pixel")
+        adapter._guard_request(allowed)
+        adapter._guard_request(blocked)
+        self.assertTrue(allowed.continued)
+        self.assertFalse(allowed.aborted)
+        self.assertTrue(blocked.aborted)
+        self.assertFalse(blocked.continued)
+
+    def test_browser_adapter_gateway_denies_unapproved_navigation(self):
+        page = _FakePage()
+        adapter = PlaywrightBrowserAdapter(page, {"https://example.com"})
+        gateway = ExecutionGateway(
+            TaskContract("browser-task", frozenset({"navigate"}),
+                         frozenset({"https://example.com"})),
+            adapter.handlers,
+        )
+        result = gateway.execute(ActionRequest(
+            "browser-task", "navigate", "https://attacker.example/"
+        ))
+        self.assertFalse(result.executed)
+        self.assertEqual(page.goto_calls, [])
+
+    def test_browser_adapter_rejects_unapproved_origin_configuration(self):
+        with self.assertRaises(ValueError):
+            PlaywrightBrowserAdapter(_FakePage(), set())
+
+
+
 if __name__ == "__main__":
     unittest.main()
