@@ -17,6 +17,7 @@ def run_browser_agent(
     task_id: str,
     planner: Planner,
     allowed_origins: Iterable[str],
+    allowed_url_prefixes: Iterable[str],
     *,
     headless: bool = True,
     max_steps: int = 8,
@@ -41,6 +42,7 @@ def run_browser_agent(
         task_id=task_id,
         allowed_actions=frozenset({"navigate", "read_page"}),
         allowed_origins=origins,
+        allowed_url_prefixes=frozenset(allowed_url_prefixes),
     )
 
     with sync_playwright() as playwright:
@@ -49,7 +51,7 @@ def run_browser_agent(
             context = browser.new_context(service_workers="block")
             try:
                 page = context.new_page()
-                adapter = PlaywrightBrowserAdapter(page, origins)
+                adapter = PlaywrightBrowserAdapter(page, origins, contract.allowed_url_prefixes)
                 gateway = ExecutionGateway(contract, adapter.handlers)
                 runtime = BrowserAgentRuntime(
                     task_id=task_id,
