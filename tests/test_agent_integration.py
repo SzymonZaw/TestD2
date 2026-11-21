@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from openai_planner import OpenAIPlanner
+from browser_adapter import PlaywrightBrowserAdapter
 from playwright_runner import run_browser_agent
 
 
@@ -135,18 +136,32 @@ class BrowserAgentIntegrationTests(unittest.TestCase):
             client=client,
             max_api_calls=4,
         )
-        with patch.dict(sys.modules, {
-            "playwright": package,
-            "playwright.sync_api": sync_api,
-        }):
+        worker_holder = {}
+
+        class FakeBrowserWorker:
+            def __init__(self, allowed_origins, allowed_url_prefixes, *, headless):
+                self.page = page
+                self.adapter = PlaywrightBrowserAdapter(
+                    page, allowed_origins, allowed_url_prefixes
+                )
+                self.handlers = self.adapter.handlers
+                self.closed = False
+                self.headless = headless
+                worker_holder["worker"] = self
+
+            def close(self):
+                self.closed = True
+
+        with patch("playwright_runner._BrowserWorkerClient", FakeBrowserWorker):
             result = run_browser_agent(
                 "integration-task",
                 planner,
                 {"https://example.com"},
+                {"https://example.com/"},
                 headless=True,
                 max_steps=4,
             )
-        return result, planner, client, page, context, browser, chromium
+        return result, planner, client, page, worker_holder["worker"]
 
     def test_openai_planner_runtime_gateway_and_playwright_runner_path(self):
         page_text = "Welcome. The public page says hello."
@@ -155,7 +170,7 @@ class BrowserAgentIntegrationTests(unittest.TestCase):
             planner_response("read_page", "https://example.com/start"),
             planner_response("finish"),
         ]
-        result, planner, client, page, context, browser, chromium = self._run_with_fakes(
+        result, planner, client, page, worker = self._run_with_fakes(
             page_text, responses
         )
 
@@ -169,9 +184,8 @@ class BrowserAgentIntegrationTests(unittest.TestCase):
             ("https://example.com/start", "domcontentloaded")
         ])
         self.assertEqual(page.route_pattern, "**/*")
-        self.assertEqual(browser.context_options, {"service_workers": "block"})
-        self.assertTrue(context.closed)
-        self.assertTrue(browser.closed)
+        self.assertTrue(worker.closed)
+        self.assertTrue(worker.headless)
         self.assertEqual(len(client.completions.calls), 3)
         self.assertEqual(planner.usage["request_count"], 3)
         self.assertEqual(planner.usage["total_tokens"], 45)
@@ -205,8 +219,7 @@ class BrowserAgentIntegrationTests(unittest.TestCase):
         self.assertEqual(page.goto_calls, [
             ("https://example.com/start", "domcontentloaded")
         ])
-        self.assertTrue(context.closed)
-        self.assertTrue(browser.closed)
+        self.assertTrue(worker.closed)
         third_payload = json.loads(
             client.completions.calls[2]["messages"][1]["content"]
         )
