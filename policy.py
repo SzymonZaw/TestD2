@@ -176,6 +176,7 @@ class TaskContract:
             isinstance(self.allowed_actions, str)
             or isinstance(self.requires_approval, str)
             or isinstance(self.allowed_origins, str)
+            or isinstance(self.allowed_url_prefixes, str)
         ):
             raise TypeError("actions and origins must be collections, not strings")
         actions = frozenset(
@@ -237,6 +238,8 @@ def _safe_url_path(url: str) -> str:
         raise ValueError("encoded or literal path separators are not allowed")
     decoded = raw_path
     for _ in range(3):
+        if "%2f" in decoded.lower() or "%5c" in decoded.lower():
+            raise ValueError("encoded path separators are not allowed")
         next_value = unquote(decoded)
         if next_value == decoded:
             break
@@ -266,6 +269,9 @@ def url_is_within_prefix(url: str, allowed_prefixes: Any) -> bool:
     """Return true only for an unambiguous URL path under an explicit task prefix."""
     try:
         origin = _origin_from_url(url)
+        parsed_url = urlsplit(url)
+        if parsed_url.query:
+            return False
         path = _safe_url_path(url)
         for prefix in allowed_prefixes:
             prefix_origin = _origin_from_url(prefix)
