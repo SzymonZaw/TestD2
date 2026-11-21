@@ -152,7 +152,9 @@ class BrowserAgentIntegrationTests(unittest.TestCase):
             def close(self):
                 self.closed = True
 
-        with patch("playwright_runner._BrowserWorkerClient", FakeBrowserWorker):
+        with patch("browser_adapter._has_public_destination", return_value=True), patch(
+            "playwright_runner._BrowserWorkerClient", FakeBrowserWorker
+        ):
             result = run_browser_agent(
                 "integration-task",
                 planner,
