@@ -77,6 +77,14 @@ Scenariusz o podanym kluczu musi wcześniej istnieć w katalogu, a jego kategori
 - Dostępna jest operacja obniżenia zaufania (`mark_untrusted`), ale nie ma metody podnoszącej zaufanie. `from_trusted_source` wolno wywoływać wyłącznie na zaufanej granicy aplikacji.
 - To warstwa metadanych dla przepływu danych, a nie kompletne IFC. Dopóki wszystkie źródła danych i transformacje agenta nie korzystają z tych obiektów, oznaczenia nie są automatycznie egzekwowane w całej aplikacji.
 
+## Information Flow Control (IFC)
+
+- `ifc.py` kontroluje przepływ pól jawnie oznaczonych jako niezaufane do skonfigurowanych wrażliwych operacji.
+- `ActionRequest.untrusted_fields` przechowuje nazwy niezaufanych pól najwyższego poziomu argumentów. Każde pole musi istnieć w argumentach żądania.
+- Oznaczenia taint są częścią fingerprintu żądania. Zmiana etykiet po przygotowaniu zgody unieważnia zgodę.
+- Niezaufane dane nie mogą trafić do wrażliwego sinka bez dokładnej zgody. Handler nie jest wywoływany przy odmowie.
+- To początkowa, jawna warstwa IFC. Integracja musi poprawnie oznaczać wszystkie pola pochodzące z danych WWW; brak etykiety nie dowodzi zaufania. Kontrola nie obejmuje jeszcze automatycznego śledzenia pochodzenia w całym runtime agenta.
+
 ## Prototyp Sentinel — zakres i ograniczenia
 
 - `sentinel_core.py` zawiera jawne reguły heurystyczne do wykrywania wybranych wzorców instrukcji, takich jak próby nadpisania instrukcji, ujawnienia promptu, eksfiltracji sekretów czy manipulacji narzędziami.
