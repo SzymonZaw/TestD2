@@ -32,6 +32,31 @@ class DestinationGuardTests(unittest.TestCase):
 
 
 class RuntimeFailClosedTests(unittest.TestCase):
+    def test_gateway_handler_exception_stops_run(self):
+        contract = TaskContract(
+            task_id="task-2",
+            allowed_actions=frozenset({"navigate"}),
+            allowed_origins=frozenset({"https://example.com"}),
+        )
+
+        def broken_handler(url, args):
+            raise RuntimeError("browser navigation failed")
+
+        gateway = ExecutionGateway(contract, {"navigate": broken_handler})
+        runtime = BrowserAgentRuntime(
+            task_id="task-2",
+            gateway=gateway,
+            planner=lambda history: AgentProposal(
+                "navigate", "https://example.com/", {}
+            ),
+            max_steps=1,
+        )
+
+        result = runtime.run()
+
+        self.assertFalse(result.completed)
+        self.assertEqual(result.stopped_reason, "gateway_execution_error")
+
     def test_approval_provider_exception_stops_run_without_execution(self):
         executed = []
         contract = TaskContract(
