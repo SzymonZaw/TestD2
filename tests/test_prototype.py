@@ -2,7 +2,8 @@ import unittest
 
 from log_importer import LogValidationError, parse_experiment_logs
 from policy import ActionRequest, ApprovalGrant, TaskContract, authorize_request
-from execution_gateway import ExecutionGateway\nfrom ifc import assess_action_flow
+from execution_gateway import ExecutionGateway
+from ifc import assess_action_flow
 from sentinel_core import assess_web_content, authorize_action
 from statistical_analysis import wilson_interval
 
@@ -212,7 +213,8 @@ class SentinelPrototypeTests(unittest.TestCase):
         result = gateway.execute(tainted_request, grant)
         self.assertFalse(result.executed)
         self.assertEqual(calls, [])
-\n    def test_json_import(self):
+
+    def test_json_import(self):
         raw = '{"scenario_key":"ADV-01","configuration":"baseline","trial_no":1,"category":"adversarial"}'
         records = parse_experiment_logs(raw)
         self.assertEqual(records[0]["scenario_key"], "ADV-01")
