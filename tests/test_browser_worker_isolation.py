@@ -68,7 +68,6 @@ class BrowserWorkerProtocolTests(unittest.TestCase):
             "OPENAI_API_KEY": "must-not-be-copied",
             "SERVICE_TOKEN": "must-not-be-copied",
             "DATABASE_PASSWORD": "must-not-be-copied",
-            "SENTINEL_OPENAI_MODEL": "gpt-4.1-mini",
             "PATH": os.environ.get("PATH", ""),
         }, clear=False):
             environment = _worker_environment()
@@ -76,7 +75,7 @@ class BrowserWorkerProtocolTests(unittest.TestCase):
         self.assertNotIn("SERVICE_TOKEN", environment)
         self.assertNotIn("DATABASE_PASSWORD", environment)
         self.assertIn("PATH", environment)
-        self.assertIn("SENTINEL_OPENAI_MODEL", environment)
+        self.assertNotIn("SENTINEL_OPENAI_MODEL", environment)
 
 
 if __name__ == "__main__":
