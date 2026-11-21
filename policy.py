@@ -166,8 +166,8 @@ class TaskContract:
     task_id: str
     allowed_actions: frozenset[str]
     allowed_origins: frozenset[str] = frozenset()
-    allowed_url_prefixes: frozenset[str] = frozenset()
     requires_approval: frozenset[str] = SENSITIVE_ACTIONS
+    allowed_url_prefixes: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if not isinstance(self.task_id, str) or not self.task_id.strip():
